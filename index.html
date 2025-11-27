@@ -3,7 +3,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Câmera Final</title>
+<title>Moldura Criativa - Câmera Final Estável</title>
+
+<script>
+    // Variáveis globais para FFmpeg (não usadas, mas mantidas para compatibilidade de estrutura)
+    let conversionSucceeded = false;
+</script>
 
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -232,6 +237,7 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
     try {
         const file = new File([blob], fileName, { type: fileType });
 
+        // Tenta 1: Web Share Files (Foto deve funcionar, Vídeo WEBM provavelmente não)
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
                 await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
@@ -242,6 +248,7 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
             }
         }
 
+        // Tenta 2: Download Direto (O Mais confiável para salvar no dispositivo)
         const url = finalUrlToRevoke || URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -258,7 +265,7 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
 
     } catch (e) {
         console.error('Falha crítica no salvamento:', e);
-        alert(`Falha crítica. Verifique as permissões de download. Erro: ${e.message}`);
+        alert(`Falha crítica. Erro: ${e.message}`);
         saveBtn.disabled = false;
         retryBtn.disabled = false;
     } finally {
@@ -277,7 +284,6 @@ function handleRetry() {
 }
 
 
-// Função para mostrar a moldura quando pronta (sem travar o código)
 async function showFrameWhenReady() {
     try {
         await new Promise((res, rej) => {
@@ -292,7 +298,7 @@ async function showFrameWhenReady() {
 }
 
 
-// FUNÇÃO PRINCIPAL DA CÂMERA (MAIS ROBUSTA)
+// FUNÇÃO PRINCIPAL DA CÂMERA
 async function startCamera(){
   try {
     // 1. Resetar o stream anterior
@@ -306,7 +312,7 @@ async function startCamera(){
       audio: true
     };
 
-    // 2. Tentar obter o stream (PONTO DE FALHA CRÍTICO)
+    // 2. Tentar obter o stream
     stream = await navigator.mediaDevices.getUserMedia(constraints);
     
     // 3. Configurar e Tentar tocar o vídeo imediatamente
@@ -314,9 +320,7 @@ async function startCamera(){
     video.muted = true;
     video.setAttribute('playsinline', '');
     
-    // Tenta play. Se o play falhar (por ex. no iOS), o autoplay deve funcionar.
     try { await video.play(); } catch(e) { console.warn("Video play falhou, dependendo de autoplay.", e); }
-
 
     // 4. Esperar o vídeo carregar os metadados
     await new Promise((res, rej) => {
@@ -355,7 +359,6 @@ async function startCamera(){
         errorMessage = err.message;
     }
     
-    // A tela preta persiste, mas pelo menos um alerta é forçado.
     alert(`❌ FALHA CRÍTICA AO ACESSAR A CÂMERA: ${errorMessage}`);
   }
 }
@@ -481,6 +484,7 @@ async function startRecording(){
 
     if (recordedChunks.length === 0) { alert('Erro: Nenhuma gravação capturada.'); return; }
     
+    // Salvar como WEBM (formato nativo)
     const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     let finalBlob = webmBlob;
     let fileNameOut = 'video_capturado.webm';
