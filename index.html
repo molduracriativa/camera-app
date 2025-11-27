@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
 <title>Moldura Criativa - Câmera Final</title>
 
-<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
-
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
@@ -187,9 +185,6 @@ const switchBtn = document.getElementById('switch');
 const photoBtn = document.getElementById('photo');
 const recordBtn = document.getElementById('record');
 
-let ffmpeg = null;
-let ffmpegLoading = false;
-
 /* -------------------------------------------------------------------------- */
 /* FUNÇÕES BASE                               */
 /* -------------------------------------------------------------------------- */
@@ -333,11 +328,9 @@ photoBtn.addEventListener('click', async () => {
   // ** Lógica Salvar Foto **
   saveBtn.onclick = async () => {
     try {
-      // 1. Tenta Web Share Files
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: "Foto Capturada" });
       } 
-      // 2. Fallback para Download Direto (Mais confiável)
       else {
         const a = document.createElement('a');
         a.href = dataUrl;
@@ -369,24 +362,6 @@ photoBtn.addEventListener('click', async () => {
 /* VÍDEO (GRAVAÇÃO)                             */
 /* -------------------------------------------------------------------------- */
 
-async function ensureFFmpegLoaded(){
-  if (ffmpeg || ffmpegLoading) return;
-  ffmpegLoading = true;
-  console.log('Iniciando carregamento do FFmpeg...');
-  try {
-    const CORE_PATH = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.5/dist/ffmpeg-core.js';
-    ffmpeg = FFmpeg.createFFmpeg({ log: false, corePath: CORE_PATH });
-    await ffmpeg.load();
-    console.log('FFmpeg carregado com sucesso.');
-  } catch (e) {
-    console.error('FFmpeg load failed', e);
-    ffmpeg = null;
-    alert('Erro ao carregar o FFmpeg. A conversão de vídeo para MP4 falhará, mas o vídeo WEBM será usado como fallback.');
-  } finally {
-    ffmpegLoading = false;
-  }
-}
-
 async function startRecording(){
   if (!videoReady) {
     const started = await new Promise(res => {
@@ -406,37 +381,43 @@ async function startRecording(){
   const canvasStream = canvas.captureStream(30);
   const audioTracks = stream ? stream.getAudioTracks() : [];
   
-  // CORREÇÃO CRÍTICA: Adiciona a trilha de áudio
+  // Adiciona a trilha de áudio
   if (audioTracks && audioTracks.length) {
     try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
+  }
+  
+  // Log de Debug para verificar as Tracks
+  console.log('Canvas Stream Tracks:', canvasStream.getTracks());
+  if (canvasStream.getVideoTracks().length === 0) {
+      alert("Aviso: Nenhuma trilha de vídeo foi detectada no Canvas Stream. A gravação falhará.");
+      return; 
   }
 
   let recordedChunks = [];
   let options = {};
-  
-  // Garante que o mimeType de vídeo seja usado, forçando a inclusão do vídeo no MediaRecorder
   const mime = 'video/webm;codecs=vp8,opus'; 
   try { 
       if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
           options.mimeType = mime; 
       } else {
-          // Tenta o tipo padrão se o específico não for suportado
           options.mimeType = 'video/webm';
       }
   } catch(e){}
-  
-  // CRITICAL FIX: Ensure the MediaRecorder has both audio and video tracks
-  // This is often implicitly done by canvasStream, but being explicit helps debug
-  // No need to pass tracks here, canvasStream already contains both tracks (canvas video + audio track added above)
 
-  recorder = new MediaRecorder(canvasStream, options);
+  try {
+    recorder = new MediaRecorder(canvasStream, options);
+  } catch (e) {
+    console.error("Erro ao inicializar MediaRecorder:", e);
+    alert("Erro crítico: O navegador não suporta a gravação de vídeo do canvas.");
+    return;
+  }
+
   recorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
 
   recorder.onstop = async () => {
     stopTimer();
     recordBtn.classList.remove('recording');
     console.log('Gravação finalizada. Total de chunks:', recordedChunks.length);
-
 
     if (recordedChunks.length === 0) {
         alert('Erro: Nenhuma gravação capturada. Tente gravar por mais tempo.');
@@ -445,85 +426,34 @@ async function startRecording(){
         return;
     }
 
-    const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+    const finalBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     
     // ** Validação Crucial de Blob **
-    if (webmBlob.size === 0) {
-        alert('Erro: Arquivo de vídeo gravado está vazio. Tente novamente.');
+    if (finalBlob.size === 0) {
+        alert('Erro: Arquivo de vídeo gravado está vazio (tamanho 0). Isso geralmente indica que o vídeo não foi capturado corretamente.');
         preview.style.display = 'none';
         previewButtons.style.display = 'none';
         return;
     }
 
-    let webmUrl = URL.createObjectURL(webmBlob); // URL para o webm original
-    
-    // Configuração inicial para fallback (WEBM)
-    let finalBlob = webmBlob;
-    let finalFileName = 'video.webm';
-    let finalFileType = 'video/webm';
-    let finalUrl = webmUrl;
+    const finalUrl = URL.createObjectURL(finalBlob); 
+    const finalFileName = 'video_capturado.webm';
+    const finalFileType = 'video/webm';
 
-    // show preview (loading state)
+    // Configura a prévia e botões
     preview.style.display = 'flex';
     previewButtons.style.display = 'flex';
     previewPhoto.style.display = 'none';
     previewVideo.style.display = 'block';
-    previewVideo.src = ''; 
+    previewVideo.src = finalUrl;
+    previewVideo.load();
+    saveBtn.textContent = 'Salvar Vídeo';
+    saveBtn.disabled = false;
+    retryBtn.disabled = false;
+    console.log('Prévia do vídeo WEBM configurada. Botões ativos.');
 
-    // Tentativa de conversão para MP4
-    try {
-      await ensureFFmpegLoaded();
-      if (!ffmpeg) throw new Error('ffmpeg not available for conversion.');
-
-      // Feedback de conversão
-      previewVideo.style.filter = 'brightness(50%)';
-      saveBtn.disabled = true;
-      retryBtn.disabled = true;
-      saveBtn.textContent = 'Processando Vídeo...';
-      console.log('Iniciando conversão para MP4...');
-
-      const data = await FFmpeg.fetchFile(webmBlob);
-      ffmpeg.FS('writeFile', 'input.webm', data);
-
-      await ffmpeg.run(
-        '-i','input.webm',
-        '-c:v','libx264',
-        '-preset','veryfast',
-        '-crf','23',
-        '-c:a','aac',
-        '-b:a','128k',
-        '-movflags','faststart',
-        'output.mp4'
-      );
-
-      const mp4Data = ffmpeg.FS('readFile', 'output.mp4');
-      const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
-      const mp4Url = URL.createObjectURL(mp4Blob);
-
-      // Atualiza variáveis finais para MP4
-      finalBlob = mp4Blob;
-      finalFileName = 'video.mp4';
-      finalFileType = 'video/mp4';
-      finalUrl = mp4Url;
-      console.log('Conversão para MP4 bem-sucedida.');
-
-      try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
-    } catch (e) {
-      console.error('Erro na conversão para MP4. Usando WEBM como fallback.', e);
-      saveBtn.textContent = 'Salvar (WEBM)';
-    } finally {
-      // Restaura o estado da UI e configura a prévia
-      previewVideo.style.filter = 'none';
-      saveBtn.disabled = false;
-      retryBtn.disabled = false;
-      
-      // Exibe o vídeo final 
-      previewVideo.src = finalUrl;
-      previewVideo.load();
-      console.log('Prévia do vídeo configurada. Botões configurados.');
-
-      // ** Lógica Salvar Vídeo (Otimizada) **
-      saveBtn.onclick = async () => {
+    // ** Lógica Salvar Vídeo (Otimizada para Download) **
+    saveBtn.onclick = async () => {
         try {
           const file = new File([finalBlob], finalFileName, { type: finalFileType });
           
@@ -551,20 +481,17 @@ async function startRecording(){
           a.click();
           document.body.removeChild(a);
         }
-      };
+    };
 
-      // ** Lógica Refazer Vídeo **
-      retryBtn.onclick = () => {
+    // ** Lógica Refazer Vídeo **
+    retryBtn.onclick = () => {
         preview.style.display = 'none';
         previewButtons.style.display = 'none';
         previewVideo.pause();
         previewVideo.src = '';
-        URL.revokeObjectURL(webmUrl); // Limpa o webm original
-        if (finalUrl && finalUrl !== webmUrl) {
-            URL.revokeObjectURL(finalUrl); // Limpa o mp4 se for diferente
-        }
-      };
-    }
+        URL.revokeObjectURL(finalUrl); // Limpa o Blob URL
+        console.log('Refazer vídeo executado. URL revogada.');
+    };
   };
 
   recorder.start();
