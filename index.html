@@ -163,6 +163,7 @@ let chunks=[];
 let elapsed=0;
 let timerInt=null;
 let videoReady=false;
+let drawInterval = null; // Novo intervalo para forçar o desenho
 
 const video=document.getElementById("video");
 const frame=document.getElementById("frame");
@@ -287,7 +288,7 @@ let drawLoopId = null;
 function drawLoop(){
   if (drawLoopId) return;
   function loop(){
-    if (videoReady) drawToCanvas();
+    if (videoReady && !drawInterval) drawToCanvas(); // Só desenha via RAF se não estiver gravando
     drawLoopId = requestAnimationFrame(loop);
   }
   loop();
@@ -376,8 +377,10 @@ async function startRecording(){
     if (!started) return;
   }
 
+  // Desenha uma vez para garantir que o canvas esteja atualizado antes de capturar
   drawToCanvas();
 
+  // Captura o stream do canvas (vídeo) e o stream da câmera (áudio)
   const canvasStream = canvas.captureStream(30);
   const audioTracks = stream ? stream.getAudioTracks() : [];
   
@@ -386,15 +389,17 @@ async function startRecording(){
     try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
   }
   
-  // Log de Debug para verificar as Tracks
+  // LOG CRÍTICO para verificação
   console.log('Canvas Stream Tracks:', canvasStream.getTracks());
   if (canvasStream.getVideoTracks().length === 0) {
-      alert("Aviso: Nenhuma trilha de vídeo foi detectada no Canvas Stream. A gravação falhará.");
-      return; 
+      alert("Aviso: Nenhuma trilha de vídeo foi detectada no Canvas Stream. A gravação do vídeo falhará.");
+      // Continua, pois o áudio pode ter sido adicionado
   }
 
   let recordedChunks = [];
   let options = {};
+  
+  // Tenta o codec mais comum para WEBM
   const mime = 'video/webm;codecs=vp8,opus'; 
   try { 
       if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
@@ -416,6 +421,10 @@ async function startRecording(){
 
   recorder.onstop = async () => {
     stopTimer();
+    // Para o intervalo de desenho agressivo
+    if (drawInterval) clearInterval(drawInterval);
+    drawInterval = null;
+    
     recordBtn.classList.remove('recording');
     console.log('Gravação finalizada. Total de chunks:', recordedChunks.length);
 
@@ -429,11 +438,9 @@ async function startRecording(){
     const finalBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     
     // ** Validação Crucial de Blob **
-    if (finalBlob.size === 0) {
-        alert('Erro: Arquivo de vídeo gravado está vazio (tamanho 0). Isso geralmente indica que o vídeo não foi capturado corretamente.');
-        preview.style.display = 'none';
-        previewButtons.style.display = 'none';
-        return;
+    if (finalBlob.size < 1024) { // Tamanho menor que 1KB indica provável falha (só metadados ou só áudio minúsculo)
+        alert('Aviso: O arquivo gravado é muito pequeno. O vídeo pode estar vazio. Tente usar outro navegador (Chrome ou Firefox).');
+        // Continua para tentar salvar mesmo assim
     }
 
     const finalUrl = URL.createObjectURL(finalBlob); 
@@ -447,21 +454,21 @@ async function startRecording(){
     previewVideo.style.display = 'block';
     previewVideo.src = finalUrl;
     previewVideo.load();
-    saveBtn.textContent = 'Salvar Vídeo';
+    saveBtn.textContent = 'Salvar Vídeo (WEBM)';
     saveBtn.disabled = false;
     retryBtn.disabled = false;
     console.log('Prévia do vídeo WEBM configurada. Botões ativos.');
 
-    // ** Lógica Salvar Vídeo (Otimizada para Download) **
+    // ** Lógica Salvar Vídeo (Download Rápido) **
     saveBtn.onclick = async () => {
         try {
           const file = new File([finalBlob], finalFileName, { type: finalFileType });
           
-          // 1. Tenta Web Share Files (para salvar na galeria/compartilhar)
+          // 1. Tenta Web Share Files (salvar na galeria/compartilhar)
           if (navigator.canShare && navigator.canShare({ files: [file] })) {
             await navigator.share({ files: [file], title: 'Vídeo Capturado' });
           } 
-          // 2. Fallback para Download Direto (O MAIS CONFIÁVEL)
+          // 2. Fallback para Download Direto (Mais confiável)
           else {
             const a = document.createElement('a');
             a.href = finalUrl;
@@ -472,7 +479,6 @@ async function startRecording(){
           }
         } catch (e) {
           console.error('Falha ao tentar salvar/compartilhar o vídeo.', e);
-          alert('Falha ao salvar o arquivo. Tente novamente ou verifique as permissões de download.');
           // Força o download como último recurso
           const a = document.createElement('a');
           a.href = finalUrl;
@@ -498,12 +504,11 @@ async function startRecording(){
   startTimer();
   recordBtn.classList.add('recording');
 
-  (function anim(){
-    if (recorder && recorder.state !== 'inactive') {
-      drawToCanvas();
-      requestAnimationFrame(anim);
-    }
-  })();
+  // Desenho agressivo para garantir que o Canvas Stream capture quadros
+  if (drawInterval) clearInterval(drawInterval);
+  drawInterval = setInterval(() => {
+    drawToCanvas();
+  }, 33); // Aproximadamente 30 FPS
 }
 
 function stopRecording(){
