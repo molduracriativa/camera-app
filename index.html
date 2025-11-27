@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Câmera Final</title>
+<title>Moldura Criativa - Versão Final Estável</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
@@ -24,7 +24,7 @@
   #video {
     position:fixed; inset:0;
     width:100vw; height:100vh;
-    object-fit:cover;
+    object-fit:cover; /* Garante que o vídeo preencha o fundo */
     z-index:1;
     pointer-events:none;
     background:#000;
@@ -41,7 +41,7 @@
     transition:opacity .2s;
   }
 
-  /* Botão ativar câmera */
+  /* Botão ativar câmera (Visível apenas se a câmera não abrir automaticamente) */
   #enable {
     position:fixed; left:50%; top:50%;
     transform:translate(-50%, -50%);
@@ -50,6 +50,7 @@
     border:none; border-radius:12px;
     font-size:20px;
     z-index:20;
+    display:none; /* Inicia oculto, só aparece em caso de erro */
   }
 
   /* Controles */
@@ -161,7 +162,7 @@
   }
 </style>
 </head>
-<body>
+<body onload="startCamera(); ensureFFmpegLoaded();">
 
 <button id="enable">Ativar Câmera</button>
 
@@ -202,7 +203,7 @@ let videoReady=false;
 let drawInterval = null; 
 let ffmpeg = null;
 let ffmpegLoading = false;
-let currentPreviewUrl = null; // Para revogar URL no retry
+let currentPreviewUrl = null; 
 
 // --- Elementos DOM ---
 const video=document.getElementById("video");
@@ -225,8 +226,35 @@ const retryBtn=document.getElementById("retry");
 
 
 /* -------------------------------------------------------------------------- */
-/* FUNÇÕES DE UTILITY/SALVAMENTO                               */
+/* FFmpeg e Salvamento (MP4 e Fotos)                                         */
 /* -------------------------------------------------------------------------- */
+
+// Pré-carrega o FFmpeg ao carregar a página
+async function ensureFFmpegLoaded(){
+  if (ffmpeg || ffmpegLoading) return true;
+  ffmpegLoading = true;
+  loadingOverlay.style.display = 'flex';
+  loadingOverlay.textContent = 'Carregando recursos de conversão...';
+  try {
+    ffmpeg = FFmpeg.createFFmpeg({ 
+        log: false,
+        progress: ({ ratio }) => {
+            if (ratio < 0 || ratio > 1) return;
+            loadingOverlay.textContent = `Convertendo: ${Math.round(ratio * 100)}%`;
+        }
+    });
+    await ffmpeg.load();
+    return true;
+  } catch (e) {
+    console.error('FFmpeg load failed', e);
+    ffmpeg = null;
+    return false;
+  } finally {
+    ffmpegLoading = false;
+    // Esconde o overlay após o carregamento inicial, a menos que a câmera falhe.
+    if (!videoReady) loadingOverlay.style.display = 'none';
+  }
+}
 
 // Função unificada para SALVAR (Otimizada para Download Direto)
 async function handleSave(blob, fileName, fileType) {
@@ -238,10 +266,9 @@ async function handleSave(blob, fileName, fileType) {
     try {
         const file = new File([blob], fileName, { type: fileType });
 
-        // Tenta 1: Web Share Files (Se falhar, passa para o Download Direto)
+        // Tenta 1: Web Share Files (Melhor para compartilhamento e salvar na Galeria)
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
-                // Se o Web Share for bem-sucedido, ele cuida do compartilhamento/salvamento
                 await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
                 handleRetry(); // Volta para a câmera
                 return; 
@@ -260,14 +287,11 @@ async function handleSave(blob, fileName, fileType) {
         setTimeout(() => {
             a.click();
             document.body.removeChild(a);
-            
-            // Mensagem de instrução para o usuário
             alert(`Download de ${fileName} iniciado! 
             1. CONFIRME O DOWNLOAD na caixa de diálogo do seu navegador.
-            2. Procure o arquivo na pasta "Downloads" do seu dispositivo. 
-            (O arquivo pode levar alguns minutos para aparecer na Galeria)`);
+            2. Procure o arquivo na pasta "Downloads" do seu dispositivo.`);
             
-            URL.revokeObjectURL(url); // Libera o recurso após o download ser iniciado
+            URL.revokeObjectURL(url); 
             handleRetry();
         }, 100);
         
@@ -303,21 +327,76 @@ function handleRetry() {
 }
 
 
-// Função para mostrar a moldura quando pronta
-async function showFrameWhenReady() {
-    try {
-        await new Promise((res, rej) => {
-            frame.onload = () => res();
-            frame.onerror = () => res(); 
-            if (frame.complete) res();
-        });
-        frame.style.opacity = '1';
-    } catch (e) { 
-        frame.style.opacity = '1'; 
+/* -------------------------------------------------------------------------- */
+/* CÂMERA E RENDERIZAÇÃO 9:16                                                */
+/* -------------------------------------------------------------------------- */
+
+// Função para iniciar a câmera (chamada no onload)
+async function startCamera(){
+  try {
+    loadingOverlay.style.display = 'flex';
+    loadingOverlay.textContent = 'Solicitando acesso à câmera...';
+    videoReady = false;
+    if (stream) {
+      stream.getTracks().forEach(t=>t.stop());
+      stream = null;
     }
+
+    const constraints = {
+      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true
+    };
+
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+    video.srcObject = stream;
+    video.muted = true;
+    video.setAttribute('playsinline', '');
+
+    await new Promise((res, rej) => {
+      const onMeta = () => {
+        video.removeEventListener('loadedmetadata', onMeta);
+        videoReady = true;
+        res();
+      };
+      video.addEventListener('loadedmetadata', onMeta);
+      setTimeout(() => { 
+        if (!videoReady) { videoReady = !!(video.videoWidth && video.videoHeight); res(); }
+      }, 5000); 
+    });
+
+    await video.play();
+
+    // UI de sucesso
+    enable.style.display = 'none';
+    controls.style.display = 'flex';
+    loadingOverlay.style.display = 'none';
+    showFrameWhenReady(); 
+    drawToCanvas();
+    drawLoop(); // Inicia o loop de desenho
+    
+    console.log("Câmera inicializada com sucesso.");
+
+  } catch (err) {
+    loadingOverlay.style.display = 'none';
+    enable.style.display = 'block'; // Mostra o botão para tentar de novo
+    
+    console.error('startCamera error', err);
+    let errorMessage = 'Erro desconhecido ao acessar câmera.';
+    if (err.name === 'NotAllowedError') {
+        errorMessage = 'PERMISSÃO NEGADA. Você precisa permitir o acesso à câmera nas configurações do navegador/sistema.';
+    } else if (err.name === 'NotFoundError') {
+        errorMessage = 'Câmera não encontrada no dispositivo.';
+    } else if (err.name === 'NotReadableError') {
+        errorMessage = 'Câmera já em uso por outro aplicativo.';
+    } else if (err.message) {
+        errorMessage = err.message;
+    }
+    alert(`❌ FALHA CRÍTICA AO ACESSAR A CÂMERA: ${errorMessage}`);
+  }
 }
 
-// Desenha o vídeo e a moldura no canvas
+// Desenha o vídeo e a moldura no canvas (Garante renderização 9:16)
 function drawToCanvas() {
     if (!videoReady) return;
 
@@ -343,11 +422,11 @@ function drawToCanvas() {
     }
 
     ctx.clearRect(0, 0, cW, cH);
-    // Inverte a imagem se estiver usando a câmera frontal (apenas no eixo X)
+    // Inverte a imagem se estiver usando a câmera frontal (espelhamento)
     if (usingFront) {
         ctx.save();
         ctx.scale(-1, 1);
-        ctx.drawImage(video, -x, y, -drawW, drawH); // x e w negativos para espelhar
+        ctx.drawImage(video, -x, y, -drawW, drawH); 
         ctx.restore();
     } else {
         ctx.drawImage(video, x, y, drawW, drawH);
@@ -359,7 +438,6 @@ function drawToCanvas() {
     }
 }
 
-// Loop de desenho contínuo (usado quando a câmera está aberta, mas não gravando)
 let drawLoopId = null;
 function drawLoop(){
   if (drawLoopId) return;
@@ -368,6 +446,20 @@ function drawLoop(){
     drawLoopId = requestAnimationFrame(loop);
   }
   loop();
+}
+
+// Mostra a moldura após carregar
+async function showFrameWhenReady() {
+    try {
+        await new Promise((res, rej) => {
+            frame.onload = () => res();
+            frame.onerror = () => res(); 
+            if (frame.complete) res();
+        });
+        frame.style.opacity = '1';
+    } catch (e) { 
+        frame.style.opacity = '1'; 
+    }
 }
 
 // Inicia/Para o timer
@@ -389,76 +481,7 @@ function stopTimer(){
 
 
 /* -------------------------------------------------------------------------- */
-/* CÂMERA E CONTROLES                                                    */
-/* -------------------------------------------------------------------------- */
-
-async function startCamera(){
-  try {
-    videoReady = false;
-    if (stream) {
-      stream.getTracks().forEach(t=>t.stop());
-      stream = null;
-    }
-
-    const constraints = {
-      // Usamos resolução ideal para o navegador escolher a melhor
-      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: true
-    };
-
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-    video.srcObject = stream;
-    video.muted = true;
-    video.setAttribute('playsinline', '');
-
-    await new Promise((res, rej) => {
-      const onMeta = () => {
-        video.removeEventListener('loadedmetadata', onMeta);
-        videoReady = true;
-        res();
-      };
-      video.addEventListener('loadedmetadata', onMeta);
-      setTimeout(() => { 
-        if (!videoReady) { videoReady = !!(video.videoWidth && video.videoHeight); res(); }
-      }, 5000); 
-    });
-
-    await video.play();
-
-    enable.style.display = 'none';
-    controls.style.display = 'flex';
-    showFrameWhenReady(); 
-    drawToCanvas();
-    
-    console.log("Câmera inicializada com sucesso.");
-
-  } catch (err) {
-    console.error('startCamera error', err);
-    let errorMessage = 'Erro desconhecido ao acessar câmera.';
-    if (err.name === 'NotAllowedError') {
-        errorMessage = 'PERMISSÃO NEGADA. Você precisa permitir o acesso à câmera nas configurações do navegador/sistema.';
-    } else if (err.name === 'NotFoundError') {
-        errorMessage = 'Câmera não encontrada no dispositivo.';
-    } else if (err.name === 'NotReadableError') {
-        errorMessage = 'Câmera já em uso por outro aplicativo.';
-    } else if (err.message) {
-        errorMessage = err.message;
-    }
-    alert(`❌ FALHA CRÍTICA AO ACESSAR A CÂMERA: ${errorMessage}`);
-  }
-}
-
-enable.addEventListener('click', startCamera);
-
-switchBtn.addEventListener('click', async () => {
-    usingFront = !usingFront;
-    await startCamera();
-});
-
-
-/* -------------------------------------------------------------------------- */
-/* FOTO (IMAGEM)                                                            */
+/* FOTO (PNG)                                                               */
 /* -------------------------------------------------------------------------- */
 
 photoBtn.addEventListener('click', async () => {
@@ -493,35 +516,8 @@ photoBtn.addEventListener('click', async () => {
 
 
 /* -------------------------------------------------------------------------- */
-/* VÍDEO (GRAVAÇÃO E CONVERSÃO)                                             */
+/* VÍDEO (Gravação e Conversão MP4)                                         */
 /* -------------------------------------------------------------------------- */
-
-// Garante que o FFmpeg esteja carregado
-async function ensureFFmpegLoaded(){
-  if (ffmpeg || ffmpegLoading) return true;
-  ffmpegLoading = true;
-  loadingOverlay.style.display = 'flex';
-  loadingOverlay.textContent = 'Carregando conversor de vídeo...';
-  try {
-    ffmpeg = FFmpeg.createFFmpeg({ 
-        log: true, // Use log: true para debug no console se necessário
-        progress: ({ ratio }) => {
-            if (ratio < 0 || ratio > 1) return;
-            loadingOverlay.textContent = `Convertendo: ${Math.round(ratio * 100)}%`;
-        }
-    });
-    await ffmpeg.load();
-    return true;
-  } catch (e) {
-    console.error('FFmpeg load failed', e);
-    ffmpeg = null;
-    alert('Falha ao carregar o conversor MP4. O vídeo será salvo como WEBM.');
-    return false;
-  } finally {
-    ffmpegLoading = false;
-    if (!ffmpeg) loadingOverlay.style.display = 'none';
-  }
-}
 
 async function startRecording(){
   if (!videoReady) {
@@ -535,23 +531,16 @@ async function startRecording(){
     drawToCanvas();
   }, 33); 
 
-  drawToCanvas();
   const canvasStream = canvas.captureStream(30); 
   
-  const videoTrack = canvasStream.getVideoTracks()[0];
-  if (videoTrack) {
-    try { videoTrack.applyConstraints({ frameRate: 30, facingMode: usingFront ? 'user' : 'environment' }); } catch(e) { console.warn("Falha ao aplicar Video Track Constraints:", e); }
-  }
-
+  // Adiciona o áudio do stream da câmera/mic à gravação
   const audioTracks = stream ? stream.getAudioTracks() : [];
   if (audioTracks && audioTracks.length) {
-    try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
+    try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('Falha ao adicionar áudio:', e); }
   }
 
   recordedChunks = [];
-  let options = {};
-  const mime = 'video/webm;codecs=vp8,opus';
-  try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) options.mimeType = mime; } catch(e){}
+  let options = { mimeType: 'video/webm;codecs=vp8,opus' }; 
 
   try {
     recorder = new MediaRecorder(canvasStream, options);
@@ -573,47 +562,46 @@ async function startRecording(){
 
     if (recordedChunks.length === 0) { alert('Erro: Nenhuma gravação capturada.'); return; }
     
-    // Inicia a conversão
     loadingOverlay.style.display = 'flex';
     loadingOverlay.textContent = 'Iniciando conversão...';
 
     const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     let finalBlob = webmBlob;
-    let fileNameOut = 'video_capturado.webm';
-    let fileType = webmBlob.type;
+    let fileNameOut = 'video_capturado.mp4';
+    let fileType = 'video/mp4';
+    
     
     // Tenta a conversão para MP4
-    if (await ensureFFmpegLoaded()) {
+    if (ffmpeg) {
       try {
-        loadingOverlay.textContent = 'Iniciando conversão (1/2)...';
         
         const data = await FFmpeg.fetchFile(webmBlob);
         ffmpeg.FS('writeFile', 'input.webm', data);
 
-        loadingOverlay.textContent = 'Convertendo vídeo (2/2)...';
+        // Parâmetros otimizados para MP4 (resolve "arquivo corrompido")
         await ffmpeg.run(
           '-i','input.webm',
           '-c:v','libx264',
           '-preset','veryfast',
-          '-crf','23',
+          '-crf','23', 
           '-c:a','aac',
           '-b:a','128k',
-          '-movflags','faststart',
+          '-movflags','faststart', // Otimiza para streaming/uso imediato
           'output.mp4'
         );
 
         const mp4Data = ffmpeg.FS('readFile', 'output.mp4');
         finalBlob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
-        fileNameOut = 'video_capturado.mp4';
-        fileType = 'video/mp4';
         
         // Limpeza
         try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
         
       } catch (e) {
         console.error('Falha na conversão para MP4. Usando WEBM.', e);
-        alert('Falha na conversão para MP4. O vídeo será salvo como WEBM.');
-        // O fallback já usa webmBlob, fileNameOut e fileType padrão
+        alert('Falha crítica na conversão MP4. O vídeo será salvo como WEBM.');
+        finalBlob = webmBlob;
+        fileNameOut = 'video_capturado.webm';
+        fileType = 'video/webm';
       }
     }
     
@@ -638,7 +626,6 @@ async function startRecording(){
         handleSave(finalBlob, fileNameOut, fileType);
     };
 
-    // O retry agora usa handleRetry para liberar a URL
     retryBtn.onclick = handleRetry;
   };
 
@@ -653,7 +640,17 @@ function stopRecording(){
   }
 }
 
-/* ---------- Press & hold binding ---------- */
+/* -------------------------------------------------------------------------- */
+/* BINDINGS E EVENTOS                                                      */
+/* -------------------------------------------------------------------------- */
+
+// Troca de câmera (frontal/traseira)
+switchBtn.addEventListener('click', async () => {
+    usingFront = !usingFront;
+    await startCamera();
+});
+
+// Lógica de gravação (Press & Hold + Click)
 (function bindPressHold(){
   recordBtn.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -689,8 +686,6 @@ function stopRecording(){
     }
   });
 })();
-
-drawLoop();
 
 window.addEventListener('pagehide', () => {
   try {
