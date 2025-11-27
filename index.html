@@ -1,579 +1,241 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Câmera Final Estável</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Moldura + Foto + Vídeo (Auto Save)</title>
 
-<script>
-    // Variáveis globais para FFmpeg (não usadas, mas mantidas para compatibilidade de estrutura)
-    let conversionSucceeded = false;
-</script>
+<!-- FFmpeg para MP4 -->
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
     width:100%; height:100%;
-    background:#000;
-    overflow:hidden;
-    font-family:system-ui, -apple-system;
+    background:#000; overflow:hidden;
+    font-family: sans-serif;
     -webkit-user-select:none;
     user-select:none;
-    -webkit-touch-callout:none;
-    touch-action:manipulation;
   }
 
-  /* Vídeo da câmera */
-  #video {
-    position:fixed; inset:0;
+  #video, #overlay {
+    position:absolute;
     width:100vw; height:100vh;
     object-fit:cover;
-    z-index:1;
-    pointer-events:none;
-    background:#000;
   }
+  #overlay { pointer-events:none; }
 
-  /* Moldura */
-  #frame {
-    position:fixed; inset:0;
-    width:100vw; height:100vh;
-    object-fit:contain;
-    z-index:3;
-    pointer-events:none;
-    opacity:0;             
-    transition:opacity .2s;
-  }
-
-  /* Botão ativar câmera */
-  #enable {
-    position:fixed; left:50%; top:50%;
-    transform:translate(-50%, -50%);
-    background:#fff; color:#000;
-    padding:18px 28px;
-    border:none; border-radius:12px;
-    font-size:20px;
-    z-index:20;
-  }
-
-  /* Controles */
-  #controls {
-    position:fixed; bottom:30px; left:0; right:0;
-    display:none; justify-content:center; gap:40px;
+  #buttons {
+    position:absolute; bottom:40px;
+    width:100%; display:flex;
+    justify-content:center; gap:40px;
     z-index:10;
   }
-
-  .btn {
+  button {
     width:80px; height:80px;
-    background:#fff; border-radius:50%;
-    border:none;
-    font-size:30px;
-    display:flex; align-items:center; justify-content:center;
-    box-shadow:0 0 20px #0008;
-    touch-action:none;
-  }
-  
-  /* Indicador de gravação */
-  .btn.recording {
-    background: red;
-    box-shadow: 0 0 0 8px rgba(255, 0, 0, 0.5);
+    border-radius:50%; border:none;
+    background:white; font-size:28px;
+    box-shadow:0 4px 12px rgba(0,0,0,.4);
   }
 
-  /* Timer */
-  #timer {
-    position:fixed; top:20px; left:50%;
-    transform:translateX(-50%);
-    font-size:28px; color:#fff;
-    display:none; font-weight:600;
-    z-index:20;
-  }
-  
-  /* Loading Overlay (para feedback de salvamento) */
-  #loading-overlay {
-      position: fixed; inset: 0;
-      background: rgba(0, 0, 0, 0.8);
-      color: #fff;
-      display: none; 
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      font-size: 24px;
-      z-index: 50;
-      padding: 0 40px;
-      text-align: center;
-  }
-  
-  #loading-overlay:after {
-      content: '';
-      width: 40px;
-      height: 40px;
-      border: 4px solid #f3f3f3;
-      border-top: 4px solid #3498db;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-top: 15px;
-  }
-  
-  /* --- ESTILOS DA PRÉVIA --- */
-  #preview {
-    position:fixed; inset:0;
-    background:#000;
-    z-index:30;
-    display:none;
-    justify-content:center;
-    align-items:center;
-  }
-
-  #preview video,
-  #preview img {
-    max-width:100%;
-    max-height:100%;
-    object-fit:contain;
-    pointer-events:auto;
-  }
-
-  /* Botões Salvar / Refazer (VERTICAL) */
-  #preview-buttons {
-    position:fixed; bottom:30px; left:0; right:0;
-    display:none;
-    flex-direction:column;
-    align-items:center;
-    gap:20px;
-    z-index:40;
-    pointer-events:auto;
-  }
-
-  .pbtn {
-    padding:16px 28px;
-    background:#fff;
-    border:none;
-    border-radius:12px;
-    font-size:20px;
-    color:#000;
-    width:60%;
-    text-align:center;
-  }
-  
-  .pbtn:disabled {
-      opacity: 0.7;
-      cursor: not-allowed;
-  }
-  
-  @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+  #msg {
+    position:absolute; top:20px; left:0; right:0;
+    text-align:center; color:white;
+    font-weight:bold; z-index:20;
+    font-size:18px;
   }
 </style>
 </head>
 <body>
 
-<button id="enable">Ativar Câmera</button>
+<div id="msg"></div>
 
-<video id="video" autoplay playsinline muted></video>
-<img id="frame" src="assets/moldura.png" alt="Moldura"/>
+<video id="video" autoplay muted playsinline></video>
+<img id="overlay" src="moldura.png">
 
-<canvas id="canvas" width="540" height="960" style="display:none"></canvas>
+<canvas id="canvas" style="display:none"></canvas>
 
-<div id="controls">
-  <button id="switch" class="btn">🔄</button>
-  <button id="photo" class="btn">📸</button>
-  <button id="record" class="btn">⏺</button>
+<div id="buttons">
+  <button id="photoBtn">📸</button>
+  <button id="recordBtn">⏺</button>
+  <button id="switchBtn">🔄</button>
 </div>
-
-<div id="timer">0.0s</div>
-
-<div id="preview">
-  <video id="previewVideo" controls playsinline style="display:none"></video>
-  <img id="previewPhoto" style="display:none" alt="Prévia da foto"/>
-</div>
-
-<div id="preview-buttons">
-  <button id="save" class="pbtn">Salvar</button>
-  <button id="retry" class="pbtn">Refazer</button>
-</div>
-
-<div id="loading-overlay">Carregando...</div>
-
 
 <script>
-// --- Variáveis Globais ---
-let stream=null;
-let usingFront=true;
-let recorder=null;
-let elapsed=0;
-let timerInt=null;
-let videoReady=false;
-let drawInterval = null; 
+/* ELEMENTOS */
+const video = document.getElementById("video");
+const overlay = document.getElementById("overlay");
+const canvas = document.getElementById("canvas");
+const msg = document.getElementById("msg");
 
-// --- Elementos DOM ---
-const video=document.getElementById("video");
-const frame=document.getElementById("frame");
-const canvas=document.getElementById("canvas");
-const ctx=canvas.getContext("2d");
-const timerEl=document.getElementById("timer");
-const enable=document.getElementById("enable");
-const controls=document.getElementById("controls");
-const loadingOverlay = document.getElementById("loading-overlay");
-const switchBtn = document.getElementById('switch');
-const photoBtn = document.getElementById('photo');
-const recordBtn = document.getElementById('record');
-const preview=document.getElementById("preview");
-const previewVideo=document.getElementById("previewVideo");
-const previewPhoto=document.getElementById("previewPhoto");
-const previewButtons=document.getElementById("preview-buttons");
-const saveBtn=document.getElementById("save");
-const retryBtn=document.getElementById("retry");
+const photoBtn = document.getElementById("photoBtn");
+const recordBtn = document.getElementById("recordBtn");
+const switchBtn = document.getElementById("switchBtn");
 
+let stream;
+let usingFront = true;
+let recorder = null;
+let chunks = [];
 
-/* -------------------------------------------------------------------------- */
-/* FUNÇÕES DE UTILITY                               */
-/* -------------------------------------------------------------------------- */
+/* =======================================================
+    1) INICIAR CÂMERA AUTOMÁTICO
+======================================================= */
+async function startCamera() {
+  if (stream) stream.getTracks().forEach(t=>t.stop());
 
-async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
-    saveBtn.disabled = true;
-    retryBtn.disabled = true;
-    loadingOverlay.style.display = 'flex';
-    loadingOverlay.textContent = 'Finalizando salvamento...';
-    
-    try {
-        const file = new File([blob], fileName, { type: fileType });
+  const constraints = {
+    video:{
+      facingMode: usingFront ? "user" : "environment",
+      width:{ideal:1080},
+      height:{ideal:1920}
+    },
+    audio:true
+  };
 
-        // Tenta 1: Web Share Files (Foto deve funcionar, Vídeo WEBM provavelmente não)
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            try {
-                await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
-                handleRetry(); 
-                return; 
-            } catch (shareError) {
-                console.warn('Falha no Web Share API. Tentando Download Direto:', shareError);
-            }
-        }
-
-        // Tenta 2: Download Direto (O Mais confiável para salvar no dispositivo)
-        const url = finalUrlToRevoke || URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        
-        setTimeout(() => {
-            a.click();
-            document.body.removeChild(a);
-            alert(`Download de ${fileName} iniciado! Por favor, CONFIRME O DOWNLOAD na caixa de diálogo do seu navegador.`);
-            handleRetry();
-        }, 100);
-        
-        document.body.appendChild(a);
-
-    } catch (e) {
-        console.error('Falha crítica no salvamento:', e);
-        alert(`Falha crítica. Erro: ${e.message}`);
-        saveBtn.disabled = false;
-        retryBtn.disabled = false;
-    } finally {
-        loadingOverlay.style.display = 'none';
-    }
-}
-
-function handleRetry() {
-    preview.style.display = 'none';
-    previewButtons.style.display = 'none';
-    previewPhoto.src = '';
-    previewVideo.src = '';
-    previewVideo.pause();
-    saveBtn.onclick = null; 
-    retryBtn.onclick = null; 
-}
-
-
-async function showFrameWhenReady() {
-    try {
-        await new Promise((res, rej) => {
-            frame.onload = () => res();
-            frame.onerror = () => res(); 
-            if (frame.complete) res();
-        });
-        frame.style.opacity = '1';
-    } catch (e) { 
-        frame.style.opacity = '1'; 
-    }
-}
-
-
-// FUNÇÃO PRINCIPAL DA CÂMERA
-async function startCamera(){
   try {
-    // 1. Resetar o stream anterior
-    if (stream) {
-      stream.getTracks().forEach(t=>t.stop());
-      stream = null;
-    }
-
-    const constraints = {
-      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: true
-    };
-
-    // 2. Tentar obter o stream
     stream = await navigator.mediaDevices.getUserMedia(constraints);
-    
-    // 3. Configurar e Tentar tocar o vídeo imediatamente
+
     video.srcObject = stream;
-    video.muted = true;
-    video.setAttribute('playsinline', '');
-    
-    try { await video.play(); } catch(e) { console.warn("Video play falhou, dependendo de autoplay.", e); }
 
-    // 4. Esperar o vídeo carregar os metadados
-    await new Promise((res, rej) => {
-      const onMeta = () => {
-        video.removeEventListener('loadedmetadata', onMeta);
-        videoReady = true;
-        res();
-      };
-      video.addEventListener('loadedmetadata', onMeta);
-      setTimeout(() => { 
-        if (!videoReady) { videoReady = !!(video.videoWidth && video.videoHeight); res(); }
-      }, 5000); 
-    });
+    video.style.transform = usingFront ? "scaleX(-1)" : "scaleX(1)";
+    overlay.style.transform = "scaleX(1)";
 
+    msg.innerHTML = "Câmera pronta!";
+    setTimeout(()=> msg.innerHTML="", 1500);
 
-    // 5. Sucesso: Atualizar a UI
-    enable.style.display = 'none';
-    controls.style.display = 'flex';
-    showFrameWhenReady(); 
-    drawToCanvas();
-    
-    console.log("Câmera inicializada com sucesso.");
-
-  } catch (err) {
-    // 6. Falha: Mostrar erro CLARAMENTE
-    console.error('startCamera error', err);
-    let errorMessage = 'Erro desconhecido ao acessar câmera.';
-    
-    if (err.name === 'NotAllowedError') {
-        errorMessage = 'PERMISSÃO NEGADA. Você precisa permitir o acesso à câmera nas configurações do navegador/sistema.';
-    } else if (err.name === 'NotFoundError') {
-        errorMessage = 'Câmera não encontrada no dispositivo.';
-    } else if (err.name === 'NotReadableError') {
-        errorMessage = 'Câmera já em uso por outro aplicativo.';
-    } else if (err.message) {
-        errorMessage = err.message;
-    }
-    
-    alert(`❌ FALHA CRÍTICA AO ACESSAR A CÂMERA: ${errorMessage}`);
-  }
-}
-
-function drawToCanvas() {
-    if (!videoReady) return;
-    const vW = video.videoWidth;
-    const vH = video.videoHeight;
-    const cW = canvas.width;
-    const cH = canvas.height;
-    const videoRatio = vW / vH;
-    const canvasRatio = cW / cH;
-    let drawW, drawH, x, y;
-
-    if (videoRatio > canvasRatio) { 
-        drawH = cH;
-        drawW = drawH * videoRatio;
-        x = (cW - drawW) / 2;
-        y = 0;
-    } else { 
-        drawW = cW;
-        drawH = drawW / videoRatio;
-        x = 0;
-        y = (cH - drawH) / 2;
-    }
-
-    ctx.clearRect(0, 0, cW, cH);
-    ctx.drawImage(video, x, y, drawW, drawH);
-
-    if (frame.complete && frame.naturalWidth > 0 && frame.style.opacity === '1') {
-        ctx.drawImage(frame, 0, 0, cW, cH);
-    }
-}
-
-let drawLoopId = null;
-function drawLoop(){
-  if (drawLoopId) return;
-  function loop(){
-    if (videoReady && !drawInterval) drawToCanvas(); 
-    drawLoopId = requestAnimationFrame(loop);
-  }
-  loop();
-}
-
-function stopDrawLoop(){
-  if (drawLoopId) {
-    cancelAnimationFrame(drawLoopId);
-    drawLoopId = null;
-  }
-}
-
-function startTimer(){
-  elapsed = 0;
-  timerEl.style.display = 'block';
-  timerEl.textContent = '0.0s';
-  timerInt = setInterval(()=> {
-    elapsed += 0.1;
-    timerEl.textContent = elapsed.toFixed(1) + 's';
-  },100);
-}
-
-function stopTimer(){
-  clearInterval(timerInt);
-  timerInt = null;
-  timerEl.style.display = 'none';
-}
-
-
-photoBtn.addEventListener('click', async () => {
-  if (!videoReady) { alert('Aguarde a câmera carregar.'); return; }
-  drawToCanvas();
-  const dataUrl = canvas.toDataURL('image/png');
-  const blob = await (await fetch(dataUrl)).blob();
-  
-  preview.style.display = 'flex';
-  previewPhoto.style.display = 'block';
-  previewVideo.style.display = 'none';
-  previewPhoto.src = dataUrl;
-  previewButtons.style.display = 'flex';
-  saveBtn.textContent = 'Salvar Foto'; 
-  saveBtn.disabled = false;
-  retryBtn.disabled = false;
-
-  saveBtn.onclick = () => { handleSave(blob, "foto.png", blob.type); };
-  retryBtn.onclick = handleRetry;
-});
-
-
-async function startRecording(){
-  if (!videoReady) { alert('Aguarde a câmera carregar.'); return; }
-
-  drawToCanvas();
-  const canvasStream = canvas.captureStream(30); 
-  
-  const videoTrack = canvasStream.getVideoTracks()[0];
-  if (videoTrack) {
-    try { videoTrack.applyConstraints({ frameRate: 30, facingMode: usingFront ? 'user' : 'environment' }); } catch(e) { console.warn("Falha ao aplicar Video Track Constraints:", e); }
-  }
-
-  const audioTracks = stream ? stream.getAudioTracks() : [];
-  if (audioTracks && audioTracks.length) {
-    try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
-  }
-
-  let recordedChunks = [];
-  let options = { mimeType: 'video/webm' }; 
-  
-  try {
-    recorder = new MediaRecorder(canvasStream, options);
   } catch (e) {
-    console.error("Erro ao inicializar MediaRecorder:", e);
-    alert("Erro crítico: O navegador não suporta a gravação de vídeo.");
+    msg.innerHTML = "Erro ao abrir câmera: " + e.message;
+  }
+}
+
+startCamera();
+
+/* TROCAR CÂMERA */
+switchBtn.onclick = ()=>{ usingFront = !usingFront; startCamera(); };
+
+
+/* =======================================================
+    2) FOTO AUTOMÁTICA E SALVA AUTOMÁTICO
+======================================================= */
+photoBtn.onclick = async ()=> {
+  const track = stream.getVideoTracks()[0];
+  const { width, height } = track.getSettings();
+
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext("2d");
+
+  if (usingFront) {
+    ctx.translate(width,0);
+    ctx.scale(-1,1);
+  }
+
+  ctx.drawImage(video,0,0,width,height);
+
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.drawImage(overlay,0,0,width,height);
+
+  const dataUrl = canvas.toDataURL("image/png");
+
+  // salvar automático
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = "foto.png";
+  a.click();
+
+  msg.innerHTML = "Foto salva!";
+  setTimeout(()=> msg.innerHTML="", 1200);
+};
+
+
+/* =======================================================
+    3) VÍDEO COM MOLDURA + ÁUDIO + MP4 SALVAMENTO AUTOMÁTICO
+======================================================= */
+recordBtn.onclick = async ()=>{
+  if (recorder && recorder.state === "recording") {
+    recorder.stop();
     return;
   }
 
-  recorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+  msg.innerHTML = "Gravando...";
+  chunks = [];
 
-  recorder.onstop = async () => {
-    stopTimer();
-    if (drawInterval) clearInterval(drawInterval);
-    drawInterval = null;
-    recordBtn.classList.remove('recording');
+  const canvasStream = canvas.captureStream(30);
+  const audio = stream.getAudioTracks()[0];
+  if (audio) canvasStream.addTrack(audio);
 
-    if (recordedChunks.length === 0) { alert('Erro: Nenhuma gravação capturada.'); return; }
-    
-    // Salvar como WEBM (formato nativo)
-    const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
-    let finalBlob = webmBlob;
-    let fileNameOut = 'video_capturado.webm';
-    let fileType = webmBlob.type;
-    let finalUrl = URL.createObjectURL(finalBlob);
-    
-    loadingOverlay.style.display = 'none';
+  recorder = new MediaRecorder(canvasStream, { mimeType: "video/webm" });
 
-    preview.style.display = 'flex';
-    previewButtons.style.display = 'flex';
-    previewPhoto.style.display = 'none';
-    previewVideo.style.display = 'block';
-    previewVideo.src = finalUrl;
-    previewVideo.load();
-    previewVideo.play();
-    
-    saveBtn.textContent = 'Salvar Vídeo (WEBM)';
-    saveBtn.disabled = false;
-    retryBtn.disabled = false;
+  recorder.ondataavailable = (e)=>{ if(e.data.size>0) chunks.push(e.data); };
 
-    saveBtn.onclick = () => { handleSave(finalBlob, fileNameOut, fileType, finalUrl); };
-    retryBtn.onclick = () => { URL.revokeObjectURL(finalUrl); handleRetry(); };
-    
+  recorder.onstop = async ()=>{
+    msg.innerHTML = "Convertendo MP4...";
+
+    const webmBlob = new Blob(chunks, {type:"video/webm"});
+
+    // FFmpeg
+    const ff = FFmpeg.createFFmpeg({ log:false });
+    await ff.load();
+
+    ff.FS("writeFile", "input.webm", await FFmpeg.fetchFile(webmBlob));
+
+    await ff.run(
+      "-i","input.webm",
+      "-c:v","libx264",
+      "-preset","veryfast",
+      "-c:a","aac",
+      "-b:a","128k",
+      "out.mp4"
+    );
+
+    const mp4 = ff.FS("readFile","out.mp4");
+    const blob = new Blob([mp4.buffer],{type:"video/mp4"});
+    const url = URL.createObjectURL(blob);
+
+    // baixar automático
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "video.mp4";
+    a.click();
+
+    msg.innerHTML = "Vídeo salvo!";
+    setTimeout(()=> msg.innerHTML="", 1500);
+
   };
 
   recorder.start();
-  startTimer();
-  recordBtn.classList.add('recording');
 
-  if (drawInterval) clearInterval(drawInterval);
-  drawInterval = setInterval(() => { drawToCanvas(); }, 33); 
-}
+  /* LOOP DE DESENHO */
 
-function stopRecording(){
-  if (recorder && recorder.state !== 'inactive') {
-    try { recorder.stop(); } catch(e){ console.warn(e); }
-  }
-}
-
-(function bindPressHold(){
-  recordBtn.addEventListener('contextmenu', e => e.preventDefault());
-
-  const handleStartRecording = async (e) => {
-    e.preventDefault();
-    if (!videoReady) await startCamera();
-    if (recorder && recorder.state !== 'inactive') return; 
-    await startRecording();
-  };
-  
-  const handleStopRecording = (e) => {
-    e.preventDefault();
-    stopRecording();
-  };
-
-  recordBtn.addEventListener('pointerdown', handleStartRecording);
-  recordBtn.addEventListener('pointerup', handleStopRecording);
-  recordBtn.addEventListener('pointercancel', handleStopRecording);
-
-  recordBtn.addEventListener('touchstart', handleStartRecording, {passive:false});
-  recordBtn.addEventListener('touchend', handleStopRecording, {passive:false});
-  recordBtn.addEventListener('touchcancel', handleStopRecording, {passive:false});
-
-  recordBtn.addEventListener('click', async (e) => {
-    e.preventDefault();
-    if (!recorder || recorder.state === 'inactive') {
-      if (!videoReady) await startCamera();
-      await startRecording();
-      setTimeout(()=> stopRecording(), 3000);
-    } else {
-      stopRecording();
+  function loop(){
+    if (recorder && recorder.state === "recording") {
+      drawFrame();
+      requestAnimationFrame(loop);
     }
-  });
-})();
+  }
+  loop();
+};
 
-enable.addEventListener('click', startCamera);
+/* Desenha vídeo + moldura no canvas */
+function drawFrame(){
+  const track = stream.getVideoTracks()[0];
+  const { width, height } = track.getSettings();
 
-switchBtn.addEventListener('click', async () => {
-    usingFront = !usingFront;
-    await startCamera();
-});
+  canvas.width = width;
+  canvas.height = height;
 
-drawLoop();
+  const ctx = canvas.getContext("2d");
 
-window.addEventListener('pagehide', () => {
-  try {
-    if (stream) stream.getTracks().forEach(t=>t.stop());
-  } catch(e){}
-  stopDrawLoop();
-});
+  if (usingFront) {
+    ctx.translate(width,0);
+    ctx.scale(-1,1);
+  }
+  ctx.drawImage(video,0,0,width,height);
+
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.drawImage(overlay,0,0,width,height);
+}
 </script>
 </body>
 </html>
