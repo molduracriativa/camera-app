@@ -1,148 +1,142 @@
-
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Camera App</title>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box;}
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+<title>Camera com Moldura — 9:16 Foto & Vídeo MP4</title>
 
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
   html,body{
     width:100%;height:100%;
-    background:#000;overflow:hidden;
-    -webkit-user-select:none;user-select:none;
-    -webkit-touch-callout:none;
-    touch-action:manipulation;
-    font-family:system-ui,-apple-system;
+    background:#000;color:#fff;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; touch-action:manipulation;
+    overflow:hidden;
   }
 
-  #video{
-    position:fixed;inset:0;
-    width:100vw;height:100vh;
+  /* ------------------ layout ------------------ */
+  #enable-btn{
+    position:fixed; left:50%; top:50%;
+    transform:translate(-50%,-50%);
+    background:#fff; color:#000;
+    border:none; padding:16px 26px;
+    border-radius:12px; font-size:18px;
+    z-index:100000;
+    touch-action:manipulation;
+  }
+
+  /* video (hidden until start) - behind canvas */
+  #video {
+    display:none;
+    position:fixed; inset:0;
+    width:100vw; height:100vh;
     object-fit:cover;
     z-index:1;
     pointer-events:none;
   }
 
-  #frame{
-    position:fixed;inset:0;
-    width:100vw;height:100vh;
-    object-fit:contain;
-    z-index:3;
+  /* canvas is the main rendered output; will be 1080x1920 and scaled to fit screen */
+  #render-canvas {
+    display:none;
+    position:fixed; left:50%; top:50%;
+    transform:translate(-50%,-50%);
+    width:100vw; height:100vh;
+    max-width:100vh; /* keep responsive */
+    z-index:2;
+    background:#000;
+    touch-action:none;
+    pointer-events:none; /* ensure buttons above receive touches */
+  }
+
+  /* overlay image kept for loading; hidden but pointer-events none */
+  #overlay {
+    display:none;
     pointer-events:none;
   }
 
-  #enable{
-    position:fixed;left:50%;top:50%;
-    transform:translate(-50%,-50%);
-    background:#fff;border:none;
-    padding:18px 28px;border-radius:12px;
-    font-size:20px;z-index:10;
-  }
-
-  #controls{
-    position:fixed;bottom:30px;left:0;right:0;
-    display:flex;justify-content:center;gap:40px;
-    z-index:10;pointer-events:auto;
-  }
-
-  .btn{
-    width:70px;height:70px;
-    background:#fff;border-radius:50%;
-    border:none;font-size:28px;
-    display:flex;align-items:center;justify-content:center;
+  /* controls on top */
+  #controls {
+    display:none;
+    position:fixed;
+    bottom:26px; left:0; right:0;
+    width:100%;
+    justify-content:center;
+    gap:18px;
+    z-index:100001;
     pointer-events:auto;
+  }
+  .btn {
+    width:68px; height:68px; border-radius:50%;
+    border:none; background:#fff; color:#000;
+    box-shadow:0 8px 20px rgba(0,0,0,0.4);
+    font-size:26px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer; pointer-events:auto;
+  }
+  .btn.red{ background:#e53935; color:#fff; }
+
+  /* preview area */
+  #preview {
+    display:none;
+    position:fixed;
+    left:50%; bottom:120px;
+    transform:translateX(-50%);
+    z-index:100002;
+    align-items:center; gap:10px; flex-direction:column;
+    pointer-events:auto;
+  }
+  #preview video, #preview img {
+    width:86vw; max-width:360px; border-radius:10px;
+    border:3px solid #fff; background:#000;
+    display:block;
+  }
+  .action-save { background:#4CAF50; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-size:16px; cursor:pointer; width:180px; }
+
+  /* status text */
+  #status { position:fixed; top:12px; left:12px; background:rgba(0,0,0,0.5); padding:8px 10px; border-radius:10px; z-index:100010; font-size:13px; display:none; pointer-events:none; color:#fff; }
+
+  /* ensure interactive elements receive pointer */
+  #controls, #controls * { pointer-events:auto !important; }
+  #preview, #preview * { pointer-events:auto !important; }
+
+  /* responsive hint: maintain aspect ratio style */
+  @media (orientation:landscape){
+    /* on landscape we still scale canvas to height */
   }
 </style>
 </head>
 <body>
 
-<button id="enable">Ativar Câmera</button>
+<!-- Initial interaction required on mobile -->
+<button id="enable-btn">Ativar Câmera</button>
 
+<!-- raw video (hidden) -->
 <video id="video" autoplay playsinline muted></video>
 
-<img id="frame" src="assets/moldura.png"/>
+<!-- overlay image (transparent PNG) - keep in same folder -->
+<img id="overlay" src="moldura.png" alt="moldura" />
 
-<div id="controls" style="display:none">
-  <button class="btn" id="switch">🔄</button>
-  <button class="btn" id="photo">📸</button>
-  <button class="btn" id="record">⏺</button>
+<!-- canvas — will be set to 1080 x 1920 logical pixels and scaled to screen -->
+<canvas id="render-canvas" width="1080" height="1920"></canvas>
+
+<!-- controls -->
+<div id="controls">
+  <button id="switch-btn" class="btn" title="Trocar câmera">🔄</button>
+  <button id="photo-btn" class="btn" title="Tirar foto">📸</button>
+  <button id="record-btn" class="btn" title="Gravar">🎥</button>
+  <button id="stop-btn" class="btn red" title="Parar" style="display:none">⏹️</button>
 </div>
 
-<script>
-let stream=null;
-let front=true;
-let recorder=null;
-let chunks=[];
+<!-- preview area -->
+<div id="preview">
+  <video id="preview-video" controls playsinline style="display:none"></video>
+  <img id="preview-photo" style="display:none"/>
+  <button id="save-btn" class="action-save">Salvar</button>
+  <button id="retry-btn" class="action-save" style="background:#777;margin-top:6px">Tentar novamente</button>
+</div>
 
-const video=document.getElementById("video");
-const enable=document.getElementById("enable");
-const controls=document.getElementById("controls");
+<div id="status"></div>
 
-document.addEventListener("touchstart",()=>{}, {passive:true});
-document.addEventListener("click",()=>{}, true);
-
-async function startCam(){
-  if(stream) stream.getTracks().forEach(t=>t.stop());
-  stream = await navigator.mediaDevices.getUserMedia({
-    video:{facingMode: front?"user":"environment"},
-    audio:true
-  });
-  video.srcObject=stream;
-  await video.play();
-  controls.style.display="flex";
-  enable.style.display="none";
-}
-
-enable.onclick=()=>startCam();
-
-document.getElementById("switch").onclick=async()=>{
-  front=!front;
-  await startCam();
-};
-
-document.getElementById("photo").onclick=()=>{
-  const c=document.createElement("canvas");
-  c.width=video.videoWidth;
-  c.height=video.videoHeight;
-  const ctx=c.getContext("2d");
-  if(front){
-    ctx.save();
-    ctx.scale(-1,1);
-    ctx.drawImage(video,-c.width,0,c.width,c.height);
-    ctx.restore();
-  }else{
-    ctx.drawImage(video,0,0,c.width,c.height);
-  }
-  const a=document.createElement("a");
-  a.href=c.toDataURL("image/png");
-  a.download="foto.png";
-  a.click();
-};
-
-document.getElementById("record").onclick=()=>{
-  if(!recorder){
-    chunks=[];
-    recorder=new MediaRecorder(stream);
-    recorder.ondataavailable=e=>chunks.push(e.data);
-    recorder.onstop=()=>{
-      const blob=new Blob(chunks,{type:"video/webm"});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement("a");
-      a.href=url;
-      a.download="video.webm";
-      a.click();
-      recorder=null;
-    };
-    recorder.start();
-    document.getElementById("record").textContent="⏹";
-  } else {
-    recorder.stop();
-    document.getElementById("record").textContent="⏺";
-  }
-};
-</script>
-
-</body>
-</html>
+<!-- FFmpeg WASM -->
+<script src="https:/
