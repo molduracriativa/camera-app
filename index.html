@@ -208,6 +208,7 @@ const ffmpeg = createFFmpeg({
     corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.5/dist/ffmpeg-core.js' 
 });
 let ffmpegLoaded = false;
+let conversionSucceeded = false;
 
 
 // --- Elementos DOM ---
@@ -243,11 +244,10 @@ async function loadFFmpeg() {
             await ffmpeg.load();
             ffmpegLoaded = true;
             loadingOverlay.style.display = 'none';
-            console.log("FFmpeg carregado com sucesso.");
         } catch (e) {
             console.error('Falha ao carregar FFmpeg:', e);
-            loadingOverlay.textContent = '⚠️ Erro ao carregar o conversor de vídeo. Apenas a foto funcionará, e o vídeo será salvo como WEBM (incompatível com galerias).';
-            // Permite que o código continue, mas a conversão falhará
+            loadingOverlay.textContent = '⚠️ Erro ao carregar o conversor de vídeo. O vídeo será salvo como WEBM e pode ser incompatível.';
+            setTimeout(() => loadingOverlay.style.display = 'none', 3000);
         }
     }
 }
@@ -262,16 +262,27 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
     try {
         const file = new File([blob], fileName, { type: fileType });
 
-        // Tenta 1: Web Share Files
+        // Tenta 1: Web Share Files (Somente MP4 é confiável aqui)
+        // Se a conversão falhou (WEBM), ou se é foto, tentamos compartilhar.
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            console.log('Tentando Web Share...');
-            await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
-            
-            handleRetry(); 
-            return; 
+            try {
+                // Tenta compartilhar. Se falhar, vamos para o Download.
+                await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
+                
+                // Se o compartilhamento foi bem-sucedido, a função acaba aqui.
+                handleRetry(); 
+                return; 
+            } catch (shareError) {
+                // Falha no compartilhamento (muito comum em mobile)
+                console.error('Falha no Web Share. Tentando Download Direto:', shareError);
+                // Continua para o Download Direto.
+            }
+        } else if (navigator.canShare) {
+             console.log("Web Share API disponível, mas não pode compartilhar o arquivo atual (formato ou tamanho).");
         }
 
-        // Tenta 2: Download Direto (Gatilho de download)
+
+        // Tenta 2: Download Direto (O MAIS ROBUSTO)
         const url = finalUrlToRevoke || URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -280,16 +291,16 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
         setTimeout(() => {
             a.click();
             document.body.removeChild(a);
-            // URL.revokeObjectURL(url); // Não revogar, pois a URL pode estar sendo usada pelo download
+            // Instrução CRÍTICA:
+            alert(`Download de ${fileName} iniciado! Por favor, **CONFIRME O DOWNLOAD** na caixa de diálogo do seu navegador. Após o download, o arquivo estará na sua galeria/pasta de downloads.`);
             handleRetry();
-            alert(`Download de ${fileName} iniciado! Se não aparecer, verifique as permissões. (Clique em 'Salvar' na caixa de diálogo do navegador)`);
         }, 100);
         
         document.body.appendChild(a);
 
     } catch (e) {
-        console.error('Falha no salvamento. Permissão negada ou erro:', e);
-        alert(`Falha ao salvar o arquivo. O navegador pode ter negado a permissão de download.`);
+        console.error('Falha crítica no salvamento:', e);
+        alert(`Falha crítica. Verifique as permissões de download. Erro: ${e.message}`);
         saveBtn.disabled = false;
         retryBtn.disabled = false;
     } finally {
@@ -299,6 +310,7 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
 
 // Função para voltar para a câmera
 function handleRetry() {
+    // ... (mantido)
     preview.style.display = 'none';
     previewButtons.style.display = 'none';
     previewPhoto.src = '';
@@ -306,6 +318,7 @@ function handleRetry() {
     previewVideo.pause();
     saveBtn.onclick = null; 
     retryBtn.onclick = null; 
+    conversionSucceeded = false; // Reset status da conversão
 }
 
 
@@ -322,6 +335,7 @@ async function showFrameWhenReady() {
 }
 
 async function startCamera(){
+  // ... (função startCamera)
   try {
     videoReady = false;
     if (stream) {
@@ -341,7 +355,6 @@ async function startCamera(){
     video.setAttribute('playsinline', '');
 
     await new Promise((res, rej) => {
-      // Simplificado: espera o vídeo carregar os metadados
       const onMeta = () => {
         video.removeEventListener('loadedmetadata', onMeta);
         videoReady = true;
@@ -370,19 +383,14 @@ async function startCamera(){
   }
 }
 
-// ... (drawToCanvas, drawLoop, stopDrawLoop, startTimer, stopTimer - funções mantidas) ...
-
 function drawToCanvas() {
     if (!videoReady) return;
-
     const vW = video.videoWidth;
     const vH = video.videoHeight;
     const cW = canvas.width;
     const cH = canvas.height;
-
     const videoRatio = vW / vH;
     const canvasRatio = cW / cH;
-
     let drawW, drawH, x, y;
 
     if (videoRatio > canvasRatio) { 
@@ -486,6 +494,7 @@ async function startRecording(){
   drawToCanvas();
   const canvasStream = canvas.captureStream(30); 
   
+  // ... (código de setup do MediaRecorder mantido) ...
   const videoTrack = canvasStream.getVideoTracks()[0];
   if (videoTrack) {
     try {
@@ -502,7 +511,7 @@ async function startRecording(){
   }
 
   let recordedChunks = [];
-  let options = { mimeType: 'video/webm' }; // Forçar WEBM para conversão
+  let options = { mimeType: 'video/webm' }; 
   
   try {
     recorder = new MediaRecorder(canvasStream, options);
@@ -531,25 +540,24 @@ async function startRecording(){
     
     const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     
-    // Variáveis de saída, inicializadas com o fallback (WEBM)
     let finalBlob = webmBlob;
     let fileNameOut = 'video_capturado.webm';
     let fileType = webmBlob.type;
     let finalUrl = URL.createObjectURL(finalBlob);
+    conversionSucceeded = false;
 
     // Tentar conversão SÓ SE o FFmpeg estiver carregado
     if (ffmpegLoaded) {
         loadingOverlay.style.display = 'flex';
-        loadingOverlay.textContent = 'Convertendo vídeo para MP4 (pode levar alguns segundos para vídeos longos)...';
+        loadingOverlay.textContent = 'Convertendo vídeo para MP4... (Pode levar um tempo)';
         
         try {
             const fileNameIn = 'input.webm';
             fileNameOut = 'video_capturado.mp4';
             
-            // 1. Escreve o arquivo WEBM
             await ffmpeg.FS('writeFile', fileNameIn, await fetchFile(webmBlob));
             
-            // 2. Comando de conversão para MP4
+            // Comando de conversão para MP4
             await ffmpeg.run(
                 '-i', fileNameIn, 
                 '-c:v', 'libx264', 
@@ -558,24 +566,22 @@ async function startRecording(){
                 fileNameOut
             );
 
-            // 3. Lê o arquivo MP4 convertido
             const data = ffmpeg.FS('readFile', fileNameOut);
             finalBlob = new Blob([data.buffer], { type: 'video/mp4' });
             fileType = 'video/mp4';
+            conversionSucceeded = true;
 
-            // 4. Limpa e atualiza o URL
             ffmpeg.FS('unlink', fileNameIn);
             ffmpeg.FS('unlink', fileNameOut);
             URL.revokeObjectURL(finalUrl);
             finalUrl = URL.createObjectURL(finalBlob);
             
-            console.log('Conversão para MP4 concluída com sucesso!');
-
         } catch (e) {
             console.error('Erro na conversão para MP4. Servindo o WEBM original:', e);
-            // Mensagem de erro mais clara sobre a falha na conversão
-            alert('Falha na conversão para MP4! O vídeo será salvo como WEBM e *pode* dar erro na galeria. Tente gravar vídeos mais curtos.');
+            alert('Atenção: Falha na conversão para MP4. O vídeo será salvo como WEBM e *pode* dar erro na galeria.');
         }
+    } else {
+        alert('Aviso: Conversor de MP4 não carregado. O vídeo será salvo como WEBM.');
     }
     
     loadingOverlay.style.display = 'none';
@@ -591,7 +597,7 @@ async function startRecording(){
     previewVideo.load();
     previewVideo.play();
     
-    saveBtn.textContent = 'Salvar Vídeo (' + (fileType === 'video/mp4' ? 'MP4' : 'WEBM') + ')';
+    saveBtn.textContent = 'Salvar Vídeo (' + (conversionSucceeded ? 'MP4' : 'WEBM') + ')';
     saveBtn.disabled = false;
     retryBtn.disabled = false;
 
