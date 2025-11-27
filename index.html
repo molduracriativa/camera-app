@@ -5,94 +5,118 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
 <title>Moldura Criativa - Câmera Final</title>
 
-<!-- FFmpeg MP4 -->
+<!-- FFmpeg (carregado só quando necessário) -->
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
-  *{margin:0;padding:0;box-sizing:border-box;}
-  html,body{
-    width:100%;height:100%;
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width:100%; height:100%;
     background:#000;
     overflow:hidden;
-    font-family:system-ui,-apple-system;
-    -webkit-user-select:none;user-select:none;
+    font-family:system-ui, -apple-system;
+    -webkit-user-select:none;
+    user-select:none;
     -webkit-touch-callout:none;
     touch-action:manipulation;
   }
 
-  #video{
-    position:fixed;inset:0;
-    width:100vw;height:100vh;
+  /* Vídeo da câmera */
+  #video {
+    position:fixed; inset:0;
+    width:100vw; height:100vh;
     object-fit:cover;
     z-index:1;
     pointer-events:none;
+    background:#000;
   }
 
-  #frame{
-    position:fixed;inset:0;
-    width:100vw;height:100vh;
+  /* Moldura */
+  #frame {
+    position:fixed; inset:0;
+    width:100vw; height:100vh;
     object-fit:contain;
     z-index:3;
     pointer-events:none;
+    opacity:0;              /* carregamento rápido */
+    transition:opacity .2s;
   }
 
-  #enable{
-    position:fixed;left:50%;top:50%;
-    transform:translate(-50%,-50%);
-    background:#fff;color:#000;
-    padding:18px 28px;border:none;
-    border-radius:12px;
+  /* Botão ativar câmera */
+  #enable {
+    position:fixed; left:50%; top:50%;
+    transform:translate(-50%, -50%);
+    background:#fff; color:#000;
+    padding:18px 28px;
+    border:none; border-radius:12px;
     font-size:20px;
     z-index:20;
   }
 
-  #controls{
-    position:fixed;bottom:30px;left:0;right:0;
-    display:none;justify-content:center;
-    gap:40px;z-index:10;
+  /* Controles */
+  #controls {
+    position:fixed; bottom:30px; left:0; right:0;
+    display:none; justify-content:center; gap:40px;
+    z-index:10;
   }
 
-  .btn{
-    width:80px;height:80px;
-    background:#fff;border-radius:50%;
-    border:none;font-size:30px;
-    display:flex;align-items:center;justify-content:center;
+  .btn {
+    width:80px; height:80px;
+    background:#fff; border-radius:50%;
+    border:none;
+    font-size:30px;
+    display:flex; align-items:center; justify-content:center;
     box-shadow:0 0 20px #0008;
+    touch-action:none;
   }
 
-  #timer{
-    position:fixed;top:20px;
-    left:50%;transform:translateX(-50%);
-    font-size:28px;
-    color:#fff;display:none;
-    z-index:20;font-weight:600;
+  /* Timer */
+  #timer {
+    position:fixed; top:20px; left:50%;
+    transform:translateX(-50%);
+    font-size:28px; color:#fff;
+    display:none; font-weight:600;
+    z-index:20;
   }
 
-  #preview{
-    position:fixed;inset:0;z-index:30;
+  /* Prévia */
+  #preview {
+    position:fixed; inset:0;
     background:#000;
+    z-index:30;
     display:none;
     justify-content:center;
     align-items:center;
   }
 
-  #preview video,#preview img{
+  #preview video,
+  #preview img {
     max-width:100%;
     max-height:100%;
     object-fit:contain;
+    pointer-events:auto;
   }
 
-  #preview-buttons{
-    position:fixed;bottom:30px;left:0;right:0;
-    display:none;justify-content:center;
-    gap:40px;z-index:40;
+  /* Botões Salvar / Refazer (VERTICAL) */
+  #preview-buttons {
+    position:fixed; bottom:30px; left:0; right:0;
+    display:none;
+    flex-direction:column;
+    align-items:center;
+    gap:20px;
+    z-index:40;
+    pointer-events:auto;
   }
 
-  .pbtn{
+  .pbtn {
     padding:16px 28px;
-    background:#fff;border:none;
+    background:#fff;
+    border:none;
     border-radius:12px;
-    font-size:20px;color:#000;
+    font-size:20px;
+    color:#000;
+    width:60%;
+    text-align:center;
   }
 </style>
 </head>
@@ -145,271 +169,413 @@ const timerEl=document.getElementById("timer");
 
 const enable=document.getElementById("enable");
 const controls=document.getElementById("controls");
-/* ============================================================
-   FUNÇÃO PRINCIPAL: ABRIR CÂMERA E ESPERAR METADADOS
-   ============================================================ */
+
+const saveBtn=document.getElementById("save");
+const retryBtn=document.getElementById("retry");
+/* --------------------- PARTE 2 (CONTINUAÇÃO) --------------------- */
+
+const switchBtn = document.getElementById('switch');
+const photoBtn = document.getElementById('photo');
+const recordBtn = document.getElementById('record');
+
+let ffmpeg = null;
+let ffmpegLoading = false;
+
+/* ---------- util: show/hide frame quickly after load ---------- */
+async function showFrameWhenReady() {
+  try {
+    // wait overlay image loaded but don't block camera show
+    if (frame && !frame.complete) {
+      await new Promise((res, rej) => {
+        frame.onload = () => res();
+        frame.onerror = () => res(); // ignore error, still continue
+      });
+    }
+    frame.style.opacity = '1';
+  } catch (e) { frame.style.opacity = '1'; }
+}
+
+/* ---------- start camera, wait metadata for reliable readiness ---------- */
 async function startCamera(){
-  try{
+  try {
     videoReady = false;
+    // stop previous
+    if (stream) {
+      stream.getTracks().forEach(t=>t.stop());
+      stream = null;
+    }
 
-    if(stream) stream.getTracks().forEach(t=>t.stop());
+    // lightweight constraints for fast open; we scale in canvas later
+    const constraints = {
+      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true
+    };
 
-    stream = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode: usingFront ? "user" : "environment" },
-      audio:true
-    });
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
 
     video.srcObject = stream;
     video.muted = true;
-    video.setAttribute("playsinline","");
+    video.setAttribute('playsinline', '');
 
-    // 🔥 ESSENCIAL: esperar videoWidth/videoHeight
-    await new Promise(res => {
-      video.onloadedmetadata = () => {
+    // Wait for metadata (videoWidth/videoHeight available)
+    await new Promise((res, rej) => {
+      if (video.readyState >= 1 && video.videoWidth && video.videoHeight) {
+        videoReady = true;
+        return res();
+      }
+      const onMeta = () => {
+        video.removeEventListener('loadedmetadata', onMeta);
         videoReady = true;
         res();
       };
+      video.addEventListener('loadedmetadata', onMeta);
+      // safety timeout (5s)
+      setTimeout(() => {
+        if (!videoReady) { videoReady = !!(video.videoWidth && video.videoHeight); res(); }
+      }, 5000);
     });
 
     await video.play();
 
-    enable.style.display="none";
-    controls.style.display="flex";
+    // show UI
+    enable.style.display = 'none';
+    controls.style.display = 'flex';
 
-  }catch(err){
-    console.error(err);
-    alert("Erro ao abrir a câmera: " + err.message);
+    // reveal frame (load frame image in background)
+    showFrameWhenReady();
+
+    // pre-draw once so canvas has something if user presses immediately
+    drawToCanvas();
+  } catch (err) {
+    console.error('startCamera error', err);
+    alert('Erro ao acessar câmera: ' + (err && err.message ? err.message : err));
   }
 }
 
-enable.onclick = () => startCamera();
-
-document.getElementById("switch").onclick = async () => {
-  usingFront = !usingFront;
-  await startCamera();
-};
-
-/* ============================================================
-   DESENHAR VÍDEO + MOLDURA NO CANVAS
-   ============================================================ */
-function drawToCanvas(){
-  if(!videoReady) return;
-
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-
-  canvas.width = 1080;
-  canvas.height = 1920;
-
-  ctx.fillStyle="#000";
-  ctx.fillRect(0,0,canvas.width,canvas.height);
-
-  const scale = canvas.height / vh;
-  const dw = vw * scale;
-  const dh = canvas.height;
-  const dx = (canvas.width - dw) / 2;
-
-  if(usingFront){
-    ctx.save();
-    ctx.translate(dx + dw, 0);
-    ctx.scale(-1,1);
-    ctx.drawImage(video, 0,0,vw,vh, 0,0,dw,dh);
-    ctx.restore();
-  }else{
-    ctx.drawImage(video, 0,0,vw,vh, dx,0,dw,dh);
+/* ---------- draw loop used for preview and to ensure canvas updated ---------- */
+let drawLoopId = null;
+function drawLoop(){
+  if (drawLoopId) return;
+  function loop(){
+    if (videoReady) drawToCanvas();
+    drawLoopId = requestAnimationFrame(loop);
   }
-
-  if(frame.naturalWidth){
-    const fw=frame.naturalWidth;
-    const fh=frame.naturalHeight;
-    const fScale = canvas.height / fh;
-    const fdw = fw * fScale;
-    const fdx = (canvas.width - fdw) / 2;
-
-    ctx.drawImage(frame,0,0,fw,fh, fdx,0,fdw,canvas.height);
+  loop();
+}
+function stopDrawLoop(){
+  if (drawLoopId) {
+    cancelAnimationFrame(drawLoopId);
+    drawLoopId = null;
   }
 }
 
-/* ============================================================
-   FOTO
-   ============================================================ */
-document.getElementById("photo").onclick = () => {
-  if(!videoReady){ alert("Aguarde a câmera abrir."); return; }
+/* ---------- PHOTO: drawToCanvas then share/save ---------- */
+photoBtn.addEventListener('click', async () => {
+  if (!videoReady) {
+    alert('Aguarde a câmera carregar.');
+    return;
+  }
 
+  // draw final frame
   drawToCanvas();
-  const dataUrl = canvas.toDataURL("image/png");
 
-  preview.style.display="flex";
-  previewButtons.style.display="flex";
+  // convert to blob
+  const dataUrl = canvas.toDataURL('image/png');
+  const blob = await (await fetch(dataUrl)).blob();
 
-  previewVideo.style.display="none";
-  previewPhoto.style.display="block";
+  // show preview fullscreen
+  preview.style.display = 'flex';
+  previewPhoto.style.display = 'block';
+  previewVideo.style.display = 'none';
   previewPhoto.src = dataUrl;
+  previewButtons.style.display = 'flex';
 
-  saveBtn.onclick = () => {
-    const a=document.createElement("a");
-    a.href=dataUrl;
-    a.download="foto.png";
-    a.click();
+  // Save uses native share when possible (option B)
+  saveBtn.onclick = async () => {
+    try {
+      // Web Share Level 2 (files) supported?
+      if (navigator.canShare && navigator.canShare({ files: [new File([blob], "foto.png", { type: blob.type })] })) {
+        await navigator.share({ files: [new File([blob], "foto.png", { type: blob.type })], title: "Foto", text: "Salvar foto" });
+      } else if (navigator.share) {
+        // fallback: create object URL and share link (some browsers support share(url) only)
+        const url = URL.createObjectURL(blob);
+        try {
+          await navigator.share({ url, title: "Foto", text: "Salvar foto" });
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          // final fallback: trigger download
+          URL.revokeObjectURL(url);
+          const a = document.createElement('a');
+          a.href = dataUrl;
+          a.download = 'foto.png';
+          a.click();
+        }
+      } else {
+        // fallback to download
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = 'foto.png';
+        a.click();
+      }
+    } catch (e) {
+      console.warn('Share/save failed, fallback to download', e);
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = 'foto.png';
+      a.click();
+    }
   };
 
   retryBtn.onclick = () => {
-    preview.style.display="none";
-    previewButtons.style.display="none";
-    previewPhoto.src="";
+    preview.style.display = 'none';
+    previewButtons.style.display = 'none';
+    previewPhoto.src = '';
   };
-};
+});
 
-/* ============================================================
-   TIMER
-   ============================================================ */
+/* ---------- Recording: press & hold (pointer events + touch fallbacks) ---------- */
+async function ensureFFmpegLoaded(){
+  if (ffmpeg || ffmpegLoading) return;
+  ffmpegLoading = true;
+  try {
+    ffmpeg = FFmpeg.createFFmpeg({ log: false });
+    await ffmpeg.load();
+  } catch (e) {
+    console.error('FFmpeg load failed', e);
+    ffmpeg = null;
+  } finally {
+    ffmpegLoading = false;
+  }
+}
+
+async function startRecording(){
+  if (!videoReady) {
+    // if camera visually open but metadata not ready, wait a bit (grace)
+    const started = await new Promise(res => {
+      let waited = 0;
+      const check = setInterval(() => {
+        waited += 100;
+        if (video.videoWidth && video.videoHeight) {
+          clearInterval(check); res(true);
+        } else if (waited > 3000) { clearInterval(check); res(false); }
+      }, 100);
+    });
+    if (!started) return;
+  }
+
+  // ensure at least one draw
+  drawToCanvas();
+
+  // capture canvas stream with audio
+  const canvasStream = canvas.captureStream(30);
+  const audioTracks = stream ? stream.getAudioTracks() : [];
+  if (audioTracks && audioTracks.length) {
+    try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
+  }
+
+  recordedChunks = [];
+  let options = {};
+  const mime = 'video/webm;codecs=vp8,opus';
+  try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) options.mimeType = mime; } catch(e){}
+
+  recorder = new MediaRecorder(canvasStream, options);
+  recorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+
+  recorder.onstop = async () => {
+    stopTimer();
+    recordBtn.classList.remove('recording');
+
+    const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+
+    // show preview (loading state)
+    preview.style.display = 'flex';
+    previewButtons.style.display = 'flex';
+    previewPhoto.style.display = 'none';
+    previewVideo.style.display = 'block';
+    previewVideo.src = ''; // clear previous
+
+    // convert to MP4 using ffmpeg (lazy load)
+    try {
+      await ensureFFmpegLoaded();
+      if (!ffmpeg) throw new Error('ffmpeg failed to load');
+
+      const data = await FFmpeg.fetchFile(webmBlob);
+      ffmpeg.FS('writeFile', 'input.webm', data);
+
+      await ffmpeg.run(
+        '-i','input.webm',
+        '-c:v','libx264',
+        '-preset','veryfast',
+        '-crf','23',
+        '-c:a','aac',
+        '-b:a','128k',
+        '-movflags','faststart',
+        'output.mp4'
+      );
+
+      const mp4Data = ffmpeg.FS('readFile', 'output.mp4');
+      const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
+      const url = URL.createObjectURL(mp4Blob);
+      previewVideo.src = url;
+
+      // Save uses native share when possible
+      saveBtn.onclick = async () => {
+        try {
+          const file = new File([mp4Blob], 'video.mp4', { type: 'video/mp4' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: 'Vídeo' });
+          } else if (navigator.share) {
+            // some browsers allow share with url
+            const tempUrl = URL.createObjectURL(mp4Blob);
+            try {
+              await navigator.share({ url: tempUrl, title: 'Vídeo' });
+            } catch (e) {
+              // fallback
+              const a = document.createElement('a');
+              a.href = tempUrl;
+              a.download = 'video.mp4';
+              a.click();
+            } finally { URL.revokeObjectURL(tempUrl); }
+          } else {
+            // fallback to download
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'video.mp4';
+            a.click();
+          }
+        } catch (e) {
+          console.warn('Share failed, fallback to download', e);
+          const a = document.createElement('a');
+          a.href = previewVideo.src;
+          a.download = 'video.mp4';
+          a.click();
+        }
+      };
+
+      retryBtn.onclick = () => {
+        preview.style.display = 'none';
+        previewButtons.style.display = 'none';
+        previewVideo.pause();
+        previewVideo.src = '';
+      };
+
+      // cleanup ffmpeg FS if possible
+      try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
+    } catch (e) {
+      console.error('convert error', e);
+      // fallback: play webm and allow share/download
+      const url = URL.createObjectURL(webmBlob);
+      previewVideo.src = url;
+      saveBtn.onclick = () => {
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([webmBlob], 'video.webm', { type: webmBlob.type })] })) {
+          const file = new File([webmBlob], 'video.webm', { type: webmBlob.type });
+          navigator.share({ files: [file], title: 'Vídeo' }).catch(()=>{ const a = document.createElement('a'); a.href = url; a.download = 'video.webm'; a.click(); });
+        } else {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'video.webm';
+          a.click();
+        }
+      };
+      retryBtn.onclick = () => { preview.style.display = 'none'; previewButtons.style.display = 'none'; previewVideo.pause(); previewVideo.src=''; };
+    }
+  };
+
+  recorder.start();
+  startTimer();
+  recordBtn.classList.add('recording');
+
+  // animation: continuously draw to canvas while recording
+  (function anim(){
+    if (recorder && recorder.state !== 'inactive') {
+      drawToCanvas();
+      requestAnimationFrame(anim);
+    }
+  })();
+}
+
+function stopRecording(){
+  if (recorder && recorder.state !== 'inactive') {
+    try { recorder.stop(); } catch(e){ console.warn(e); }
+  }
+}
+
+/* ---------- Timer helpers ---------- */
 function startTimer(){
   elapsed = 0;
-  timerEl.style.display="block";
-
-  timerInt = setInterval(()=>{
+  timerEl.style.display = 'block';
+  timerEl.textContent = '0.0s';
+  timerInt = setInterval(()=> {
     elapsed += 0.1;
-    timerEl.textContent = elapsed.toFixed(1) + "s";
+    timerEl.textContent = elapsed.toFixed(1) + 's';
   },100);
 }
 
 function stopTimer(){
   clearInterval(timerInt);
-  timerEl.style.display="none";
+  timerInt = null;
+  timerEl.style.display = 'none';
 }
 
-/* ============================================================
-   GRAVAR (PRESSIONAR E SEGURAR)
-   ============================================================ */
-async function startRecording(){
-  if(!videoReady){
-    console.log("Video not ready");
-    return;
-  }
+/* ---------- Press & hold binding (pointer + touch fallbacks) ---------- */
+(function bindPressHold(){
+  // Prevent default context
+  recordBtn.addEventListener('contextmenu', e => e.preventDefault());
 
-  drawToCanvas();
-
-  const canvasStream = canvas.captureStream(30);
-  const audioTrack = stream.getAudioTracks()[0];
-  if(audioTrack) canvasStream.addTrack(audioTrack);
-
-  chunks = [];
-  let options = {};
-
-  const mime='video/webm;codecs=vp8,opus';
-  if(MediaRecorder.isTypeSupported(mime)) options.mimeType=mime;
-
-  recorder = new MediaRecorder(canvasStream, options);
-  recorder.ondataavailable = e => { if(e.data.size>0) chunks.push(e.data); };
-
-  recorder.onstop = async () => {
-    stopTimer();
-
-    const webmBlob = new Blob(chunks, {type:"video/webm"});
-
-    preview.style.display="flex";
-    previewButtons.style.display="flex";
-    previewVideo.style.display="block";
-    previewPhoto.style.display="none";
-
-    try{
-      const ffmpeg = FFmpeg.createFFmpeg({log:false});
-      await ffmpeg.load();
-      ffmpeg.FS('writeFile','input.webm', await FFmpeg.fetchFile(webmBlob));
-
-      await ffmpeg.run(
-        "-i","input.webm",
-        "-c:v","libx264",
-        "-preset","veryfast",
-        "-crf","23",
-        "-c:a","aac",
-        "-b:a","128k",
-        "-movflags","faststart",
-        "output.mp4"
-      );
-
-      const mp4Data = ffmpeg.FS('readFile','output.mp4');
-      const mp4Blob = new Blob([mp4Data.buffer], {type:"video/mp4"});
-      const url = URL.createObjectURL(mp4Blob);
-
-      previewVideo.src = url;
-
-      saveBtn.onclick = () => {
-        const a=document.createElement("a");
-        a.href=url;
-        a.download="video.mp4";
-        a.click();
-      };
-
-      retryBtn.onclick = () => {
-        preview.style.display="none";
-        previewButtons.style.display="none";
-        previewVideo.pause();
-        previewVideo.src="";
-      };
-
-    }catch(e){
-      console.error("FFmpeg error", e);
-      const url=URL.createObjectURL(webmBlob);
-      previewVideo.src=url;
+  recordBtn.addEventListener('pointerdown', async (e) => {
+    e.preventDefault();
+    // ensure camera ready
+    if (!videoReady) {
+      // small wait
+      await startCamera();
     }
+    await startRecording();
+  });
 
-    recorder=null;
-  };
+  recordBtn.addEventListener('pointerup', (e) => {
+    e.preventDefault();
+    stopRecording();
+  });
 
-  recorder.start();
-  startTimer();
-}
+  recordBtn.addEventListener('pointercancel', (e) => {
+    e.preventDefault();
+    stopRecording();
+  });
 
-/* Stop Recording */
-function stopRecording(){
-  if(recorder && recorder.state !== "inactive"){
-    recorder.stop();
-  }
-}
+  // touch fallback
+  recordBtn.addEventListener('touchstart', async (e) => { e.preventDefault(); if (!videoReady) await startCamera(); await startRecording(); }, {passive:false});
+  recordBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); }, {passive:false});
+  recordBtn.addEventListener('touchcancel', (e) => { e.preventDefault(); stopRecording(); }, {passive:false});
 
-/* ============================================================
-   CONTROLES PRESS & HOLD
-   ============================================================ */
-const recordBtn=document.getElementById("record");
+  // click fallback: quick tap toggles short recording (accessibility)
+  recordBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (!recorder) {
+      if (!videoReady) await startCamera();
+      await startRecording();
+      // auto-stop after 3s for click fallback
+      setTimeout(()=> stopRecording(), 3000);
+    } else {
+      stopRecording();
+    }
+  });
+})();
 
-// Prevenir clique padrão
-recordBtn.addEventListener("click", e => e.preventDefault());
-
-// Início da gravação
-recordBtn.addEventListener("pointerdown", async e => {
-  e.preventDefault();
-  await startRecording();
+/* ---------- Ensure preview buttons are clickable (fix pointer-events issues) ---------- */
+previewButtons.addEventListener('click', (e) => {
+  // clicks are handled by saveBtn/retryBtn assigned dynamically; stop propagation
+  e.stopPropagation();
 });
 
-// Soltar → parar gravação
-recordBtn.addEventListener("pointerup", e => {
-  e.preventDefault();
-  stopRecording();
+/* ---------- Auto-start draw loop (keeps canvas updated in background) ---------- */
+drawLoop();
+
+/* ---------- final touch: when page hidden, stop camera ---------- */
+window.addEventListener('pagehide', () => {
+  try {
+    if (stream) stream.getTracks().forEach(t=>t.stop());
+  } catch(e){}
+  stopDrawLoop();
 });
 
-// Cancelar (dedo arrasta pra fora)
-recordBtn.addEventListener("pointercancel", e => {
-  e.preventDefault();
-  stopRecording();
-});
-
-// Fallback para touchstart/end
-recordBtn.addEventListener("touchstart", async e => {
-  e.preventDefault();
-  await startRecording();
-},{passive:false});
-
-recordBtn.addEventListener("touchend", e => {
-  e.preventDefault();
-  stopRecording();
-},{passive:false});
-
-recordBtn.addEventListener("touchcancel", e => {
-  e.preventDefault();
-  stopRecording();
-},{passive:false});
-
-</script>
-</body>
-</html>
+/* --------------------- END PARTE 2 --------------------- */
