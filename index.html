@@ -95,15 +95,49 @@
       z-index: 50;
   }
   
-  #loading-overlay:after {
-      content: '';
-      width: 40px;
-      height: 40px;
-      border: 4px solid #f3f3f3;
-      border-top: 4px solid #3498db;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-top: 15px;
+  /* --- ESTILOS DA PRÉVIA REINTRODUZIDOS --- */
+  #preview {
+    position:fixed; inset:0;
+    background:#000;
+    z-index:30;
+    display:none;
+    justify-content:center;
+    align-items:center;
+  }
+
+  #preview video,
+  #preview img {
+    max-width:100%;
+    max-height:100%;
+    object-fit:contain;
+    pointer-events:auto;
+  }
+
+  /* Botões Salvar / Refazer (VERTICAL) */
+  #preview-buttons {
+    position:fixed; bottom:30px; left:0; right:0;
+    display:none;
+    flex-direction:column;
+    align-items:center;
+    gap:20px;
+    z-index:40;
+    pointer-events:auto;
+  }
+
+  .pbtn {
+    padding:16px 28px;
+    background:#fff;
+    border:none;
+    border-radius:12px;
+    font-size:20px;
+    color:#000;
+    width:60%;
+    text-align:center;
+  }
+  
+  .pbtn:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
   }
   
   @keyframes spin {
@@ -128,6 +162,16 @@
 </div>
 
 <div id="timer">0.0s</div>
+
+<div id="preview">
+  <video id="previewVideo" controls playsinline style="display:none"></video>
+  <img id="previewPhoto" style="display:none" alt="Prévia da foto"/>
+</div>
+
+<div id="preview-buttons">
+  <button id="save" class="pbtn">Salvar</button>
+  <button id="retry" class="pbtn">Refazer</button>
+</div>
 
 <div id="loading-overlay">Processando e Salvando...</div>
 
@@ -156,13 +200,25 @@ const switchBtn = document.getElementById('switch');
 const photoBtn = document.getElementById('photo');
 const recordBtn = document.getElementById('record');
 
+// Elementos da prévia REINTRODUZIDOS
+const preview=document.getElementById("preview");
+const previewVideo=document.getElementById("previewVideo");
+const previewPhoto=document.getElementById("previewPhoto");
+const previewButtons=document.getElementById("preview-buttons");
+const saveBtn=document.getElementById("save");
+const retryBtn=document.getElementById("retry");
+
 
 /* -------------------------------------------------------------------------- */
 /* FUNÇÕES DE UTILITY                               */
 /* -------------------------------------------------------------------------- */
 
-async function autoSaveMedia(blob, fileName, fileType) {
+// Função unificada para SALVAR quando o botão é CLICADO
+async function handleSave(blob, fileName, fileType) {
+    saveBtn.disabled = true;
+    retryBtn.disabled = true;
     loadingOverlay.style.display = 'flex';
+    loadingOverlay.textContent = 'Processando e Salvando...';
     
     try {
         const file = new File([blob], fileName, { type: fileType });
@@ -171,11 +227,13 @@ async function autoSaveMedia(blob, fileName, fileType) {
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             console.log('Tentando Web Share...');
             await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
-            loadingOverlay.style.display = 'none';
+            
+            // Se o compartilhamento foi bem-sucedido, volta para a câmera
+            handleRetry(); 
             return; 
         }
 
-        // Tenta 2: Download Direto (O mais robusto)
+        // Tenta 2: Download Direto (Gatilho de download mais robusto)
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -186,18 +244,35 @@ async function autoSaveMedia(blob, fileName, fileType) {
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url); 
-            loadingOverlay.style.display = 'none';
-            alert(`Download de ${fileName} iniciado!`);
+            handleRetry();
+            alert(`Download de ${fileName} iniciado! Se não aparecer, verifique as permissões.`);
         }, 100);
         
         document.body.appendChild(a);
 
     } catch (e) {
+        console.error('Falha no salvamento. Permissão negada ou erro:', e);
+        alert(`Falha ao salvar o arquivo. O navegador pode ter negado a permissão de download. Tente novamente ou use Chrome/Firefox.`);
+        saveBtn.disabled = false;
+        retryBtn.disabled = false;
         loadingOverlay.style.display = 'none';
-        console.error('Falha no salvamento automático. Verifique permissões.', e);
-        alert(`Falha ao salvar o arquivo automaticamente. Verifique as permissões de download do seu navegador. Tente usar Chrome ou Firefox.`);
+    } finally {
+        loadingOverlay.style.display = 'none';
     }
 }
+
+// Função para voltar para a câmera
+function handleRetry() {
+    // Limpar a prévia e voltar
+    preview.style.display = 'none';
+    previewButtons.style.display = 'none';
+    previewPhoto.src = '';
+    previewVideo.src = '';
+    previewVideo.pause();
+    saveBtn.onclick = null; // Limpa o handler
+    retryBtn.onclick = null; // Limpa o handler
+}
+
 
 async function showFrameWhenReady() {
   try {
@@ -220,7 +295,6 @@ async function startCamera(){
     }
 
     const constraints = {
-      // Pedir uma resolução que o canvas suporte de forma eficiente
       video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: true
     };
@@ -315,7 +389,7 @@ function stopDrawLoop(){
 }
 
 /* -------------------------------------------------------------------------- */
-/* FOTO (IMAGEM) - AGORA AUTOMÁTICA                             */
+/* FOTO (IMAGEM) - AGORA COM PRÉVIA E SALVAMENTO MANUAL                             */
 /* -------------------------------------------------------------------------- */
 
 photoBtn.addEventListener('click', async () => {
@@ -326,16 +400,31 @@ photoBtn.addEventListener('click', async () => {
 
   drawToCanvas();
 
-  // A resolução da foto será 540x960 (a resolução do canvas)
   const dataUrl = canvas.toDataURL('image/png');
   const blob = await (await fetch(dataUrl)).blob();
   
-  await autoSaveMedia(blob, "foto.png", blob.type);
+  // Exibir prévia da foto
+  preview.style.display = 'flex';
+  previewPhoto.style.display = 'block';
+  previewVideo.style.display = 'none';
+  previewPhoto.src = dataUrl;
+  previewButtons.style.display = 'flex';
+  
+  saveBtn.textContent = 'Salvar Foto'; 
+  saveBtn.disabled = false;
+  retryBtn.disabled = false;
 
+  // Atribuir lógica de salvamento ao botão Salvar
+  saveBtn.onclick = () => {
+      handleSave(blob, "foto.png", blob.type);
+  };
+  
+  // Atribuir lógica de refazer ao botão Refazer
+  retryBtn.onclick = handleRetry;
 });
 
 /* -------------------------------------------------------------------------- */
-/* VÍDEO (GRAVAÇÃO) - AGORA AUTOMÁTICA                             */
+/* VÍDEO (GRAVAÇÃO) - AGORA COM PRÉVIA E SALVAMENTO MANUAL                             */
 /* -------------------------------------------------------------------------- */
 
 async function startRecording(){
@@ -353,11 +442,8 @@ async function startRecording(){
   }
 
   drawToCanvas();
-
-  // Captura o stream do canvas, forçando 30 FPS
   const canvasStream = canvas.captureStream(30); 
   
-  // OBTÉM A TRILHA DE VÍDEO E FORÇA O FPS (Ajuste Crítico)
   const videoTrack = canvasStream.getVideoTracks()[0];
   if (videoTrack) {
     try {
@@ -366,15 +452,10 @@ async function startRecording(){
     } catch(e) {
         console.warn("Falha ao aplicar Video Track Constraints:", e);
     }
-  } else {
-      console.warn("Nenhuma trilha de vídeo encontrada no canvas stream. A gravação falhará.");
-      alert("Aviso: O navegador não conseguiu gerar a trilha de vídeo do canvas.");
   }
-
 
   const audioTracks = stream ? stream.getAudioTracks() : [];
   
-  // Adiciona a trilha de áudio
   if (audioTracks && audioTracks.length) {
     try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
   }
@@ -383,13 +464,12 @@ async function startRecording(){
   let recordedChunks = [];
   let options = {};
   
-  // MUDANÇA CRÍTICA: Prioriza o MIME Type mais básico ('video/webm')
+  // Prioriza o MIME Type mais básico ('video/webm')
   const mime = 'video/webm'; 
   try { 
       if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
           options.mimeType = mime; 
       } else {
-          // Último recurso: tenta qualquer coisa que o navegador suporte
           options.mimeType = MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm';
       }
   } catch(e){}
@@ -423,8 +503,32 @@ async function startRecording(){
         console.warn('Aviso: O arquivo gravado é muito pequeno. O vídeo pode estar vazio.');
     }
     
-    // Salva automaticamente
-    await autoSaveMedia(finalBlob, 'video_capturado.webm', finalBlob.type);
+    const finalUrl = URL.createObjectURL(finalBlob);
+    
+    // Exibir prévia do vídeo
+    preview.style.display = 'flex';
+    previewButtons.style.display = 'flex';
+    previewPhoto.style.display = 'none';
+    previewVideo.style.display = 'block';
+    previewVideo.src = finalUrl;
+    previewVideo.load();
+    previewVideo.play();
+    
+    saveBtn.textContent = 'Salvar Vídeo';
+    saveBtn.disabled = false;
+    retryBtn.disabled = false;
+
+    // Atribuir lógica de salvamento ao botão Salvar
+    saveBtn.onclick = () => {
+        handleSave(finalBlob, 'video_capturado.webm', finalBlob.type);
+        URL.revokeObjectURL(finalUrl); // Limpar o URL quando tentar salvar
+    };
+
+    // Atribuir lógica de refazer ao botão Refazer
+    retryBtn.onclick = () => {
+        URL.revokeObjectURL(finalUrl); // Limpar o URL
+        handleRetry();
+    };
     
   };
 
@@ -495,7 +599,6 @@ function stopTimer(){
     if (!recorder || recorder.state === 'inactive') {
       if (!videoReady) await startCamera();
       await startRecording();
-      // Auto-stop após 3s para clicks rápidos
       setTimeout(()=> stopRecording(), 3000);
     } else {
       stopRecording();
