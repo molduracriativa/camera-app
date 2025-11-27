@@ -3,121 +3,30 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Câmera Final</title>
+<title>Moldura Criativa - Fix Save/Retry</title>
 
-<!-- FFmpeg (carregado só quando necessário) -->
+<!-- FFmpeg (lazy load inside script) -->
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body {
-    width:100%; height:100%;
-    background:#000;
-    overflow:hidden;
-    font-family:system-ui, -apple-system;
-    -webkit-user-select:none;
-    user-select:none;
-    -webkit-touch-callout:none;
-    touch-action:manipulation;
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{
+    width:100%;height:100%;background:#000;overflow:hidden;
+    font-family:system-ui,-apple-system; -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none; touch-action:manipulation;
   }
 
-  /* Vídeo da câmera */
-  #video {
-    position:fixed; inset:0;
-    width:100vw; height:100vh;
-    object-fit:cover;
-    z-index:1;
-    pointer-events:none;
-    background:#000;
-  }
-
-  /* Moldura */
-  #frame {
-    position:fixed; inset:0;
-    width:100vw; height:100vh;
-    object-fit:contain;
-    z-index:3;
-    pointer-events:none;
-    opacity:0;              /* carregamento rápido */
-    transition:opacity .2s;
-  }
-
-  /* Botão ativar câmera */
-  #enable {
-    position:fixed; left:50%; top:50%;
-    transform:translate(-50%, -50%);
-    background:#fff; color:#000;
-    padding:18px 28px;
-    border:none; border-radius:12px;
-    font-size:20px;
-    z-index:20;
-  }
-
-  /* Controles */
-  #controls {
-    position:fixed; bottom:30px; left:0; right:0;
-    display:none; justify-content:center; gap:40px;
-    z-index:10;
-  }
-
-  .btn {
-    width:80px; height:80px;
-    background:#fff; border-radius:50%;
-    border:none;
-    font-size:30px;
-    display:flex; align-items:center; justify-content:center;
-    box-shadow:0 0 20px #0008;
-    touch-action:none;
-  }
-
-  /* Timer */
-  #timer {
-    position:fixed; top:20px; left:50%;
-    transform:translateX(-50%);
-    font-size:28px; color:#fff;
-    display:none; font-weight:600;
-    z-index:20;
-  }
-
-  /* Prévia */
-  #preview {
-    position:fixed; inset:0;
-    background:#000;
-    z-index:30;
-    display:none;
-    justify-content:center;
-    align-items:center;
-  }
-
-  #preview video,
-  #preview img {
-    max-width:100%;
-    max-height:100%;
-    object-fit:contain;
-    pointer-events:auto;
-  }
-
-  /* Botões Salvar / Refazer (VERTICAL) */
-  #preview-buttons {
-    position:fixed; bottom:30px; left:0; right:0;
-    display:none;
-    flex-direction:column;
-    align-items:center;
-    gap:20px;
-    z-index:40;
-    pointer-events:auto;
-  }
-
-  .pbtn {
-    padding:16px 28px;
-    background:#fff;
-    border:none;
-    border-radius:12px;
-    font-size:20px;
-    color:#000;
-    width:60%;
-    text-align:center;
-  }
+  #video{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:1;pointer-events:none;background:#000}
+  #frame{position:fixed;inset:0;width:100vw;height:100vh;object-fit:contain;z-index:3;pointer-events:none;opacity:0;transition:opacity .2s}
+  #enable{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;color:#000;padding:16px 24px;border-radius:12px;border:none;z-index:22}
+  #controls{position:fixed;bottom:30px;left:0;right:0;display:none;justify-content:center;gap:36px;z-index:20}
+  .btn{width:78px;height:78px;border-radius:50%;background:#fff;border:none;font-size:26px;display:flex;align-items:center;justify-content:center;box-shadow:0 8px 20px rgba(0,0,0,0.45);touch-action:none}
+  #timer{position:fixed;top:18px;left:50%;transform:translateX(-50%);font-size:22px;color:#fff;display:none;z-index:21}
+  #preview{position:fixed;inset:0;background:#000;display:none;align-items:center;justify-content:center;z-index:50;pointer-events:auto}
+  #preview video,#preview img{max-width:100%;max-height:100%;object-fit:contain;pointer-events:auto}
+  #preview-buttons{position:fixed;bottom:30px;left:0;right:0;display:none;flex-direction:column;align-items:center;gap:14px;z-index:60;pointer-events:auto}
+  .pbtn{width:68%;max-width:360px;padding:14px 20px;border-radius:12px;border:none;background:#fff;color:#000;font-size:18px}
+  button{ -webkit-tap-highlight-color: transparent; }
 </style>
 </head>
 <body>
@@ -125,7 +34,7 @@
 <button id="enable">Ativar Câmera</button>
 
 <video id="video" autoplay playsinline muted></video>
-<img id="frame" src="assets/moldura.png"/>
+<img id="frame" src="assets/moldura.png" alt="moldura"/>
 
 <canvas id="canvas" width="1080" height="1920" style="display:none"></canvas>
 
@@ -142,97 +51,142 @@
   <img id="previewPhoto" style="display:none"/>
 </div>
 
-<div id="preview-buttons">
+<div id="preview-buttons" aria-hidden="true">
   <button id="save" class="pbtn">Salvar</button>
   <button id="retry" class="pbtn">Refazer</button>
 </div>
 
 <script>
-let stream=null;
-let usingFront=true;
-let recorder=null;
-let chunks=[];
-let elapsed=0;
-let timerInt=null;
-let videoReady=false;
+/* ========== Elements & State ========== */
+const enable = document.getElementById('enable');
+const video = document.getElementById('video');
+const frame = document.getElementById('frame');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 
-const video=document.getElementById("video");
-const frame=document.getElementById("frame");
-const canvas=document.getElementById("canvas");
-const ctx=canvas.getContext("2d");
-
-const preview=document.getElementById("preview");
-const previewVideo=document.getElementById("previewVideo");
-const previewPhoto=document.getElementById("previewPhoto");
-const previewButtons=document.getElementById("preview-buttons");
-const timerEl=document.getElementById("timer");
-
-const enable=document.getElementById("enable");
-const controls=document.getElementById("controls");
-
-const saveBtn=document.getElementById("save");
-const retryBtn=document.getElementById("retry");
-/* --------------------- PARTE 2 (CONTINUAÇÃO) --------------------- */
-
+const controls = document.getElementById('controls');
 const switchBtn = document.getElementById('switch');
 const photoBtn = document.getElementById('photo');
 const recordBtn = document.getElementById('record');
 
+const timerEl = document.getElementById('timer');
+const preview = document.getElementById('preview');
+const previewVideo = document.getElementById('previewVideo');
+const previewPhoto = document.getElementById('previewPhoto');
+const previewButtons = document.getElementById('preview-buttons');
+const saveBtn = document.getElementById('save');
+const retryBtn = document.getElementById('retry');
+
+let stream = null;
+let usingFront = true;
+let recorder = null;
+let recordedChunks = [];
+let elapsed = 0;
+let timerInt = null;
 let ffmpeg = null;
 let ffmpegLoading = false;
+let videoReady = false;
 
-/* ---------- util: show/hide frame quickly after load ---------- */
-async function showFrameWhenReady() {
-  try {
-    // wait overlay image loaded but don't block camera show
-    if (frame && !frame.complete) {
-      await new Promise((res, rej) => {
-        frame.onload = () => res();
-        frame.onerror = () => res(); // ignore error, still continue
-      });
-    }
-    frame.style.opacity = '1';
-  } catch (e) { frame.style.opacity = '1'; }
+/* prevent longpress menu on mobile */
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+/* ========== Utilities ========== */
+function safeReplaceHandler(el, eventName, handler) {
+  // remove all previous listeners for that event by cloning (simple and robust)
+  const newEl = el.cloneNode(true);
+  el.parentNode.replaceChild(newEl, el);
+  newEl.addEventListener(eventName, handler);
+  return newEl;
 }
 
-/* ---------- start camera, wait metadata for reliable readiness ---------- */
+function setSaveHandlerForBlob(blob, filename, mime) {
+  // ensure previous handlers removed
+  const newSave = saveBtn.cloneNode(true);
+  saveBtn.parentNode.replaceChild(newSave, saveBtn);
+  // replace global ref
+  window.__saveBtnRef = newSave;
+
+  newSave.addEventListener('click', async () => {
+    try {
+      const file = new File([blob], filename, { type: mime });
+      // Web Share Level 2
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+      } else if (navigator.share) {
+        // fallback: share URL
+        const url = URL.createObjectURL(blob);
+        try {
+          await navigator.share({ url, title: filename });
+          URL.revokeObjectURL(url);
+        } catch (e) {
+          URL.revokeObjectURL(url);
+          // final fallback -> download
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.click();
+        }
+      } else {
+        // fallback -> download
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      console.warn('save failed fallback to download', err);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  // Update saveBtn reference
+  window.__saveBtnRef = newSave;
+  return newSave;
+}
+
+function setRetryHandler(handler) {
+  const newRetry = retryBtn.cloneNode(true);
+  retryBtn.parentNode.replaceChild(newRetry, retryBtn);
+  newRetry.addEventListener('click', handler);
+  window.__retryBtnRef = newRetry;
+  return newRetry;
+}
+
+/* ========== Camera Start ========== */
 async function startCamera(){
   try {
     videoReady = false;
-    // stop previous
-    if (stream) {
-      stream.getTracks().forEach(t=>t.stop());
-      stream = null;
-    }
+    if (stream) stream.getTracks().forEach(t=>t.stop());
 
-    // lightweight constraints for fast open; we scale in canvas later
     const constraints = {
-      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: usingFront ? 'user' : 'environment', width:{ ideal:1280 }, height:{ ideal:720 } },
       audio: true
     };
 
     stream = await navigator.mediaDevices.getUserMedia(constraints);
-
     video.srcObject = stream;
     video.muted = true;
     video.setAttribute('playsinline', '');
 
-    // Wait for metadata (videoWidth/videoHeight available)
-    await new Promise((res, rej) => {
-      if (video.readyState >= 1 && video.videoWidth && video.videoHeight) {
-        videoReady = true;
-        return res();
-      }
+    // wait for metadata reliably (avoid premature recording)
+    await new Promise(res => {
       const onMeta = () => {
         video.removeEventListener('loadedmetadata', onMeta);
         videoReady = true;
         res();
       };
       video.addEventListener('loadedmetadata', onMeta);
-      // safety timeout (5s)
+      // safety timeout: if metadata takes too long, still proceed after 3s
       setTimeout(() => {
         if (!videoReady) { videoReady = !!(video.videoWidth && video.videoHeight); res(); }
-      }, 5000);
+      }, 3000);
     });
 
     await video.play();
@@ -240,133 +194,132 @@ async function startCamera(){
     // show UI
     enable.style.display = 'none';
     controls.style.display = 'flex';
+    // reveal frame (non-blocking)
+    if (!frame.complete) frame.onload = () => frame.style.opacity = '1';
+    else frame.style.opacity = '1';
 
-    // reveal frame (load frame image in background)
-    showFrameWhenReady();
-
-    // pre-draw once so canvas has something if user presses immediately
+    // quick pre-draw so canvas isn't blank
     drawToCanvas();
-  } catch (err) {
-    console.error('startCamera error', err);
-    alert('Erro ao acessar câmera: ' + (err && err.message ? err.message : err));
+  } catch (e) {
+    console.error('startCamera', e);
+    alert('Erro ao abrir câmera: ' + (e && e.message ? e.message : e));
+  }
+}
+enable.addEventListener('click', startCamera);
+switchBtn.addEventListener('click', async () => { usingFront = !usingFront; await startCamera(); });
+
+/* ========== Drawing ========== */
+function drawToCanvas(){
+  if (!videoReady) return;
+  const vw = video.videoWidth || canvas.width;
+  const vh = video.videoHeight || canvas.height;
+
+  canvas.width = 1080;
+  canvas.height = 1920;
+
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  const scale = canvas.height / vh;
+  const drawW = vw * scale;
+  const drawH = canvas.height;
+  const dx = (canvas.width - drawW) / 2;
+
+  if (usingFront) {
+    ctx.save();
+    ctx.translate(dx + drawW, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(video, 0,0,vw,vh, 0,0, drawW, drawH);
+    ctx.restore();
+  } else {
+    ctx.drawImage(video, 0,0,vw,vh, dx,0, drawW, drawH);
+  }
+
+  if (frame && frame.naturalWidth) {
+    const fw = frame.naturalWidth;
+    const fh = frame.naturalHeight;
+    const fScale = canvas.height / fh;
+    const fW = fw * fScale;
+    const fDX = (canvas.width - fW) / 2;
+    ctx.drawImage(frame, 0,0,fw,fh, fDX,0,fW, canvas.height);
   }
 }
 
-/* ---------- draw loop used for preview and to ensure canvas updated ---------- */
-let drawLoopId = null;
-function drawLoop(){
-  if (drawLoopId) return;
+/* small continuous draw to keep canvas warm (low-cost) */
+let drawRAF = null;
+function startDrawLoop(){
+  if (drawRAF) return;
   function loop(){
     if (videoReady) drawToCanvas();
-    drawLoopId = requestAnimationFrame(loop);
+    drawRAF = requestAnimationFrame(loop);
   }
   loop();
 }
 function stopDrawLoop(){
-  if (drawLoopId) {
-    cancelAnimationFrame(drawLoopId);
-    drawLoopId = null;
-  }
+  if (drawRAF) { cancelAnimationFrame(drawRAF); drawRAF = null; }
 }
 
-/* ---------- PHOTO: drawToCanvas then share/save ---------- */
+/* ========== Photo capture ========== */
 photoBtn.addEventListener('click', async () => {
-  if (!videoReady) {
-    alert('Aguarde a câmera carregar.');
-    return;
-  }
+  if (!videoReady) { alert('Aguarde a câmera abrir'); return; }
 
-  // draw final frame
   drawToCanvas();
-
-  // convert to blob
   const dataUrl = canvas.toDataURL('image/png');
   const blob = await (await fetch(dataUrl)).blob();
 
-  // show preview fullscreen
   preview.style.display = 'flex';
   previewPhoto.style.display = 'block';
   previewVideo.style.display = 'none';
   previewPhoto.src = dataUrl;
+
+  // show buttons
   previewButtons.style.display = 'flex';
+  previewButtons.setAttribute('aria-hidden', 'false');
 
-  // Save uses native share when possible (option B)
-  saveBtn.onclick = async () => {
-    try {
-      // Web Share Level 2 (files) supported?
-      if (navigator.canShare && navigator.canShare({ files: [new File([blob], "foto.png", { type: blob.type })] })) {
-        await navigator.share({ files: [new File([blob], "foto.png", { type: blob.type })], title: "Foto", text: "Salvar foto" });
-      } else if (navigator.share) {
-        // fallback: create object URL and share link (some browsers support share(url) only)
-        const url = URL.createObjectURL(blob);
-        try {
-          await navigator.share({ url, title: "Foto", text: "Salvar foto" });
-          URL.revokeObjectURL(url);
-        } catch (e) {
-          // final fallback: trigger download
-          URL.revokeObjectURL(url);
-          const a = document.createElement('a');
-          a.href = dataUrl;
-          a.download = 'foto.png';
-          a.click();
-        }
-      } else {
-        // fallback to download
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = 'foto.png';
-        a.click();
-      }
-    } catch (e) {
-      console.warn('Share/save failed, fallback to download', e);
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = 'foto.png';
-      a.click();
-    }
-  };
-
-  retryBtn.onclick = () => {
+  // set save & retry handlers robustly
+  setSaveHandlerForBlob(blob, 'foto.png', blob.type);
+  setRetryHandler(() => {
     preview.style.display = 'none';
     previewButtons.style.display = 'none';
     previewPhoto.src = '';
-  };
+  });
 });
 
-/* ---------- Recording: press & hold (pointer events + touch fallbacks) ---------- */
-async function ensureFFmpegLoaded(){
+/* ========== Recording (press & hold) ========== */
+async function ensureFFmpeg(){
   if (ffmpeg || ffmpegLoading) return;
   ffmpegLoading = true;
   try {
-    ffmpeg = FFmpeg.createFFmpeg({ log: false });
+    ffmpeg = FFmpeg.createFFmpeg({ log:false });
     await ffmpeg.load();
   } catch (e) {
-    console.error('FFmpeg load failed', e);
+    console.warn('ffmpeg load failed', e);
     ffmpeg = null;
   } finally {
     ffmpegLoading = false;
   }
 }
 
+function startTimer(){
+  elapsed = 0;
+  timerEl.style.display = 'block';
+  timerEl.textContent = '0.0s';
+  timerInt = setInterval(()=>{ elapsed += 0.1; timerEl.textContent = elapsed.toFixed(1) + 's'; }, 100);
+}
+function stopTimer(){
+  clearInterval(timerInt); timerInt = null; timerEl.style.display = 'none';
+}
+
 async function startRecording(){
   if (!videoReady) {
-    // if camera visually open but metadata not ready, wait a bit (grace)
-    const started = await new Promise(res => {
-      let waited = 0;
-      const check = setInterval(() => {
-        waited += 100;
-        if (video.videoWidth && video.videoHeight) {
-          clearInterval(check); res(true);
-        } else if (waited > 3000) { clearInterval(check); res(false); }
-      }, 100);
-    });
-    if (!started) return;
+    // try small wait if visual camera open but metadata late
+    let waited = 0;
+    while (!video.videoWidth && waited < 3000) { await new Promise(r=>setTimeout(r, 100)); waited += 100; }
+    if (!video.videoWidth) { console.warn('video still not ready'); return; }
   }
 
-  // ensure at least one draw
   drawToCanvas();
 
-  // capture canvas stream with audio
   const canvasStream = canvas.captureStream(30);
   const audioTracks = stream ? stream.getAudioTracks() : [];
   if (audioTracks && audioTracks.length) {
@@ -387,20 +340,21 @@ async function startRecording(){
 
     const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
 
-    // show preview (loading state)
+    // show preview UI
     preview.style.display = 'flex';
-    previewButtons.style.display = 'flex';
-    previewPhoto.style.display = 'none';
     previewVideo.style.display = 'block';
-    previewVideo.src = ''; // clear previous
+    previewPhoto.style.display = 'none';
+    previewVideo.src = ''; // will set after conversion
+    previewButtons.style.display = 'flex';
+    previewButtons.setAttribute('aria-hidden','false');
 
-    // convert to MP4 using ffmpeg (lazy load)
+    // try convert to MP4
     try {
-      await ensureFFmpegLoaded();
-      if (!ffmpeg) throw new Error('ffmpeg failed to load');
+      await ensureFFmpeg();
+      if (!ffmpeg) throw new Error('ffmpeg unavailable');
 
       const data = await FFmpeg.fetchFile(webmBlob);
-      ffmpeg.FS('writeFile', 'input.webm', data);
+      ffmpeg.FS('writeFile','input.webm', data);
 
       await ffmpeg.run(
         '-i','input.webm',
@@ -413,71 +367,33 @@ async function startRecording(){
         'output.mp4'
       );
 
-      const mp4Data = ffmpeg.FS('readFile', 'output.mp4');
+      const mp4Data = ffmpeg.FS('readFile','output.mp4');
       const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
       const url = URL.createObjectURL(mp4Blob);
       previewVideo.src = url;
 
-      // Save uses native share when possible
-      saveBtn.onclick = async () => {
-        try {
-          const file = new File([mp4Blob], 'video.mp4', { type: 'video/mp4' });
-          if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            await navigator.share({ files: [file], title: 'Vídeo' });
-          } else if (navigator.share) {
-            // some browsers allow share with url
-            const tempUrl = URL.createObjectURL(mp4Blob);
-            try {
-              await navigator.share({ url: tempUrl, title: 'Vídeo' });
-            } catch (e) {
-              // fallback
-              const a = document.createElement('a');
-              a.href = tempUrl;
-              a.download = 'video.mp4';
-              a.click();
-            } finally { URL.revokeObjectURL(tempUrl); }
-          } else {
-            // fallback to download
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'video.mp4';
-            a.click();
-          }
-        } catch (e) {
-          console.warn('Share failed, fallback to download', e);
-          const a = document.createElement('a');
-          a.href = previewVideo.src;
-          a.download = 'video.mp4';
-          a.click();
-        }
-      };
-
-      retryBtn.onclick = () => {
+      // robust handlers
+      setSaveHandlerForBlob(mp4Blob, 'video.mp4', 'video/mp4');
+      setRetryHandler(() => {
         preview.style.display = 'none';
         previewButtons.style.display = 'none';
         previewVideo.pause();
         previewVideo.src = '';
-      };
+      });
 
-      // cleanup ffmpeg FS if possible
+      // cleanup
       try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
     } catch (e) {
-      console.error('convert error', e);
-      // fallback: play webm and allow share/download
+      console.warn('convert failed, fallback to webm', e);
       const url = URL.createObjectURL(webmBlob);
       previewVideo.src = url;
-      saveBtn.onclick = () => {
-        if (navigator.share && navigator.canShare && navigator.canShare({ files: [new File([webmBlob], 'video.webm', { type: webmBlob.type })] })) {
-          const file = new File([webmBlob], 'video.webm', { type: webmBlob.type });
-          navigator.share({ files: [file], title: 'Vídeo' }).catch(()=>{ const a = document.createElement('a'); a.href = url; a.download = 'video.webm'; a.click(); });
-        } else {
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = 'video.webm';
-          a.click();
-        }
-      };
-      retryBtn.onclick = () => { preview.style.display = 'none'; previewButtons.style.display = 'none'; previewVideo.pause(); previewVideo.src=''; };
+      setSaveHandlerForBlob(webmBlob, 'video.webm', webmBlob.type);
+      setRetryHandler(() => {
+        preview.style.display = 'none';
+        previewButtons.style.display = 'none';
+        previewVideo.pause();
+        previewVideo.src = '';
+      });
     }
   };
 
@@ -485,11 +401,11 @@ async function startRecording(){
   startTimer();
   recordBtn.classList.add('recording');
 
-  // animation: continuously draw to canvas while recording
-  (function anim(){
+  // keep drawing while recording
+  (function loop(){
     if (recorder && recorder.state !== 'inactive') {
       drawToCanvas();
-      requestAnimationFrame(anim);
+      requestAnimationFrame(loop);
     }
   })();
 }
@@ -500,82 +416,40 @@ function stopRecording(){
   }
 }
 
-/* ---------- Timer helpers ---------- */
-function startTimer(){
-  elapsed = 0;
-  timerEl.style.display = 'block';
-  timerEl.textContent = '0.0s';
-  timerInt = setInterval(()=> {
-    elapsed += 0.1;
-    timerEl.textContent = elapsed.toFixed(1) + 's';
-  },100);
-}
+/* ========== Bind press & hold with pointer + touch fallback ========== */
+recordBtn.addEventListener('contextmenu', e => e.preventDefault());
 
-function stopTimer(){
-  clearInterval(timerInt);
-  timerInt = null;
-  timerEl.style.display = 'none';
-}
+recordBtn.addEventListener('pointerdown', async e => { e.preventDefault(); if (!videoReady) await startCamera(); await startRecording(); });
+recordBtn.addEventListener('pointerup', e => { e.preventDefault(); stopRecording(); });
+recordBtn.addEventListener('pointercancel', e => { e.preventDefault(); stopRecording(); });
 
-/* ---------- Press & hold binding (pointer + touch fallbacks) ---------- */
-(function bindPressHold(){
-  // Prevent default context
-  recordBtn.addEventListener('contextmenu', e => e.preventDefault());
+recordBtn.addEventListener('touchstart', async e => { e.preventDefault(); if (!videoReady) await startCamera(); await startRecording(); }, {passive:false});
+recordBtn.addEventListener('touchend', e => { e.preventDefault(); stopRecording(); }, {passive:false});
+recordBtn.addEventListener('touchcancel', e => { e.preventDefault(); stopRecording(); }, {passive:false});
 
-  recordBtn.addEventListener('pointerdown', async (e) => {
-    e.preventDefault();
-    // ensure camera ready
-    if (!videoReady) {
-      // small wait
-      await startCamera();
-    }
+/* click fallback: short auto-record for accessibility */
+recordBtn.addEventListener('click', async (e) => {
+  e.preventDefault();
+  if (!recorder) {
+    if (!videoReady) await startCamera();
     await startRecording();
-  });
-
-  recordBtn.addEventListener('pointerup', (e) => {
-    e.preventDefault();
+    setTimeout(()=> stopRecording(), 2500);
+  } else {
     stopRecording();
-  });
-
-  recordBtn.addEventListener('pointercancel', (e) => {
-    e.preventDefault();
-    stopRecording();
-  });
-
-  // touch fallback
-  recordBtn.addEventListener('touchstart', async (e) => { e.preventDefault(); if (!videoReady) await startCamera(); await startRecording(); }, {passive:false});
-  recordBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); }, {passive:false});
-  recordBtn.addEventListener('touchcancel', (e) => { e.preventDefault(); stopRecording(); }, {passive:false});
-
-  // click fallback: quick tap toggles short recording (accessibility)
-  recordBtn.addEventListener('click', async (e) => {
-    e.preventDefault();
-    if (!recorder) {
-      if (!videoReady) await startCamera();
-      await startRecording();
-      // auto-stop after 3s for click fallback
-      setTimeout(()=> stopRecording(), 3000);
-    } else {
-      stopRecording();
-    }
-  });
-})();
-
-/* ---------- Ensure preview buttons are clickable (fix pointer-events issues) ---------- */
-previewButtons.addEventListener('click', (e) => {
-  // clicks are handled by saveBtn/retryBtn assigned dynamically; stop propagation
-  e.stopPropagation();
+  }
 });
 
-/* ---------- Auto-start draw loop (keeps canvas updated in background) ---------- */
-drawLoop();
+/* ensure previewButtons clickable by stopping propagation on preview */
+preview.addEventListener('click', (e) => { /* tapping outside preview area could close - we keep it simple */ });
 
-/* ---------- final touch: when page hidden, stop camera ---------- */
+/* draw loop warmup */
+startDrawLoop();
+
+/* cleanup */
 window.addEventListener('pagehide', () => {
-  try {
-    if (stream) stream.getTracks().forEach(t=>t.stop());
-  } catch(e){}
+  try { if (stream) stream.getTracks().forEach(t=>t.stop()); } catch(e){}
   stopDrawLoop();
 });
-
-/* --------------------- END PARTE 2 --------------------- */
+</script>
+</body>
+</html>
