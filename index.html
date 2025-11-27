@@ -182,7 +182,6 @@ const controls=document.getElementById("controls");
 
 const saveBtn=document.getElementById("save");
 const retryBtn=document.getElementById("retry");
-/* --------------------- PARTE 2 (CONTINUAÇÃO) --------------------- */
 
 const switchBtn = document.getElementById('switch');
 const photoBtn = document.getElementById('photo');
@@ -195,31 +194,26 @@ let ffmpegLoading = false;
 /* FUNÇÕES BASE                               */
 /* -------------------------------------------------------------------------- */
 
-/* ---------- util: show/hide frame quickly after load ---------- */
 async function showFrameWhenReady() {
   try {
-    // wait overlay image loaded but don't block camera show
     if (frame && !frame.complete) {
       await new Promise((res, rej) => {
         frame.onload = () => res();
-        frame.onerror = () => res(); // ignore error, still continue
+        frame.onerror = () => res(); 
       });
     }
     frame.style.opacity = '1';
   } catch (e) { frame.style.opacity = '1'; }
 }
 
-/* ---------- start camera, wait metadata for reliable readiness ---------- */
 async function startCamera(){
   try {
     videoReady = false;
-    // stop previous
     if (stream) {
       stream.getTracks().forEach(t=>t.stop());
       stream = null;
     }
 
-    // lightweight constraints for fast open; we scale in canvas later
     const constraints = {
       video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: true
@@ -231,7 +225,6 @@ async function startCamera(){
     video.muted = true;
     video.setAttribute('playsinline', '');
 
-    // Wait for metadata (videoWidth/videoHeight available)
     await new Promise((res, rej) => {
       if (video.readyState >= 1 && video.videoWidth && video.videoHeight) {
         videoReady = true;
@@ -243,7 +236,6 @@ async function startCamera(){
         res();
       };
       video.addEventListener('loadedmetadata', onMeta);
-      // safety timeout (5s)
       setTimeout(() => {
         if (!videoReady) { videoReady = !!(video.videoWidth && video.videoHeight); res(); }
       }, 5000);
@@ -251,14 +243,11 @@ async function startCamera(){
 
     await video.play();
 
-    // show UI
     enable.style.display = 'none';
     controls.style.display = 'flex';
 
-    // reveal frame (load frame image in background)
     showFrameWhenReady();
 
-    // pre-draw once so canvas has something if user presses immediately
     drawToCanvas();
   } catch (err) {
     console.error('startCamera error', err);
@@ -266,7 +255,6 @@ async function startCamera(){
   }
 }
 
-/* ---------- drawToCanvas: ESSENCIAL para renderizar vídeo + moldura ---------- */
 function drawToCanvas() {
     if (!videoReady) return;
 
@@ -275,38 +263,31 @@ function drawToCanvas() {
     const cW = canvas.width;
     const cH = canvas.height;
 
-    // Calcule a proporção de cobertura (cover)
     const videoRatio = vW / vH;
     const canvasRatio = cW / cH;
 
     let drawW, drawH, x, y;
 
-    // Lógica para que o vídeo preencha toda a área (object-fit: cover)
-    if (videoRatio > canvasRatio) { // Vídeo mais largo que o canvas
+    if (videoRatio > canvasRatio) { 
         drawH = cH;
         drawW = drawH * videoRatio;
         x = (cW - drawW) / 2;
         y = 0;
-    } else { // Vídeo mais alto que o canvas
+    } else { 
         drawW = cW;
         drawH = drawW / videoRatio;
         x = 0;
         y = (cH - drawH) / 2;
     }
 
-    // 1. Limpa o canvas
     ctx.clearRect(0, 0, cW, cH);
-    
-    // 2. Desenha o vídeo (redimensionado para cobrir)
     ctx.drawImage(video, x, y, drawW, drawH);
 
-    // 3. Desenha a moldura por cima (redimensionada para conter)
     if (frame.complete && frame.naturalWidth > 0 && frame.style.opacity === '1') {
         ctx.drawImage(frame, 0, 0, cW, cH);
     }
 }
 
-/* ---------- draw loop used for preview and to ensure canvas updated ---------- */
 let drawLoopId = null;
 function drawLoop(){
   if (drawLoopId) return;
@@ -333,22 +314,19 @@ photoBtn.addEventListener('click', async () => {
     return;
   }
 
-  // draw final frame
   drawToCanvas();
 
-  // convert to blob
   const dataUrl = canvas.toDataURL('image/png');
   const blob = await (await fetch(dataUrl)).blob();
   const file = new File([blob], "foto.png", { type: blob.type });
 
-  // show preview fullscreen
   preview.style.display = 'flex';
   previewPhoto.style.display = 'block';
   previewVideo.style.display = 'none';
   previewPhoto.src = dataUrl;
   previewButtons.style.display = 'flex';
   
-  saveBtn.textContent = 'Salvar'; // Garante o texto correto
+  saveBtn.textContent = 'Salvar'; 
   saveBtn.disabled = false;
   retryBtn.disabled = false;
 
@@ -359,16 +337,7 @@ photoBtn.addEventListener('click', async () => {
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: "Foto Capturada" });
       } 
-      // 2. Tenta Web Share URL (Fallback menos comum)
-      else if (navigator.share) {
-        const url = URL.createObjectURL(blob);
-        try {
-          await navigator.share({ url, title: "Foto Capturada" });
-        } finally {
-          URL.revokeObjectURL(url);
-        }
-      } 
-      // 3. Fallback para Download Direto (Mais confiável)
+      // 2. Fallback para Download Direto (Mais confiável)
       else {
         const a = document.createElement('a');
         a.href = dataUrl;
@@ -379,6 +348,7 @@ photoBtn.addEventListener('click', async () => {
       }
     } catch (e) {
       console.warn('Share/save failed, fallback to download', e);
+      // Força o download se o Web Share falhar ou for cancelado
       const a = document.createElement('a');
       a.href = dataUrl;
       a.download = 'foto.png';
@@ -405,7 +375,6 @@ async function ensureFFmpegLoaded(){
   ffmpegLoading = true;
   console.log('Iniciando carregamento do FFmpeg...');
   try {
-    // Definindo o corePath explicitamente para garantir que seja encontrado no CDN
     const CORE_PATH = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.5/dist/ffmpeg-core.js';
     ffmpeg = FFmpeg.createFFmpeg({ log: false, corePath: CORE_PATH });
     await ffmpeg.load();
@@ -413,7 +382,7 @@ async function ensureFFmpegLoaded(){
   } catch (e) {
     console.error('FFmpeg load failed', e);
     ffmpeg = null;
-    alert('Erro ao carregar o FFmpeg. A conversão de vídeo para MP4 falhará, mas o vídeo WEBM pode ser salvo.');
+    alert('Erro ao carregar o FFmpeg. A conversão de vídeo para MP4 falhará, mas o vídeo WEBM será usado como fallback.');
   } finally {
     ffmpegLoading = false;
   }
@@ -421,7 +390,6 @@ async function ensureFFmpegLoaded(){
 
 async function startRecording(){
   if (!videoReady) {
-    // small wait
     const started = await new Promise(res => {
       let waited = 0;
       const check = setInterval(() => {
@@ -434,10 +402,8 @@ async function startRecording(){
     if (!started) return;
   }
 
-  // ensure at least one draw
   drawToCanvas();
 
-  // capture canvas stream with audio
   const canvasStream = canvas.captureStream(30);
   const audioTracks = stream ? stream.getAudioTracks() : [];
   if (audioTracks && audioTracks.length) {
@@ -446,7 +412,6 @@ async function startRecording(){
 
   let recordedChunks = [];
   let options = {};
-  // Tentativa de usar VP8/Opus (mais comum em navegadores)
   const mime = 'video/webm;codecs=vp8,opus'; 
   try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) options.mimeType = mime; } catch(e){}
 
@@ -460,32 +425,41 @@ async function startRecording(){
 
 
     if (recordedChunks.length === 0) {
-        alert('Erro: Nenhuma gravação capturada. Tente novamente.');
-        // Oculta prévia e botões se a gravação falhou
+        alert('Erro: Nenhuma gravação capturada. Tente gravar por mais tempo.');
         preview.style.display = 'none';
         previewButtons.style.display = 'none';
         return;
     }
 
     const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
-    const webmUrl = URL.createObjectURL(webmBlob);
+    
+    // ** Validação Crucial de Blob **
+    if (webmBlob.size === 0) {
+        alert('Erro: Arquivo de vídeo gravado está vazio. Tente novamente.');
+        preview.style.display = 'none';
+        previewButtons.style.display = 'none';
+        return;
+    }
+
+    let webmUrl = URL.createObjectURL(webmBlob); // URL para o webm original
+    
+    // Configuração inicial para fallback (WEBM)
+    let finalBlob = webmBlob;
+    let finalFileName = 'video.webm';
+    let finalFileType = 'video/webm';
+    let finalUrl = webmUrl;
 
     // show preview (loading state)
     preview.style.display = 'flex';
     previewButtons.style.display = 'flex';
     previewPhoto.style.display = 'none';
     previewVideo.style.display = 'block';
-    previewVideo.src = ''; // clear previous
+    previewVideo.src = ''; 
 
-    let finalBlob = webmBlob;
-    let finalFileName = 'video.webm';
-    let finalFileType = 'video/webm';
-    let finalUrl = webmUrl;
-
-    // convert to MP4 using ffmpeg (lazy load)
+    // Tentativa de conversão para MP4
     try {
       await ensureFFmpegLoaded();
-      if (!ffmpeg) throw new Error('ffmpeg failed to load or was not available.');
+      if (!ffmpeg) throw new Error('ffmpeg not available for conversion.');
 
       // Feedback de conversão
       previewVideo.style.filter = 'brightness(50%)';
@@ -519,43 +493,32 @@ async function startRecording(){
       finalUrl = mp4Url;
       console.log('Conversão para MP4 bem-sucedida.');
 
-      // cleanup ffmpeg FS
       try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
     } catch (e) {
       console.error('Erro na conversão para MP4. Usando WEBM como fallback.', e);
-      // Fallback para WEBM é automático, variáveis finais já estão com webmBlob/webmUrl
+      // Aqui, finalBlob/finalUrl permanecem WEBM.
+      saveBtn.textContent = 'Salvar (WEBM)';
     } finally {
-      // Restaura o estado da UI
+      // Restaura o estado da UI e configura a prévia
       previewVideo.style.filter = 'none';
       saveBtn.disabled = false;
       retryBtn.disabled = false;
-      saveBtn.textContent = 'Salvar';
-
-      // Exibe o vídeo final (MP4 ou WEBM fallback)
+      
+      // Exibe o vídeo final 
       previewVideo.src = finalUrl;
       previewVideo.load();
-      console.log('Prévia do vídeo configurada. Configurando botões Salvar/Refazer.');
+      console.log('Prévia do vídeo configurada. Botões configurados.');
 
-
-      // ** Lógica Salvar Vídeo (Corrigida) **
+      // ** Lógica Salvar Vídeo (Otimizada) **
       saveBtn.onclick = async () => {
         try {
           const file = new File([finalBlob], finalFileName, { type: finalFileType });
           
-          // 1. Tenta Web Share Files
+          // 1. Tenta Web Share Files (para salvar na galeria/compartilhar)
           if (navigator.canShare && navigator.canShare({ files: [file] })) {
             await navigator.share({ files: [file], title: 'Vídeo Capturado' });
           } 
-          // 2. Tenta Web Share URL (Fallback menos comum)
-          else if (navigator.share) {
-             const tempUrl = URL.createObjectURL(finalBlob);
-             try {
-                await navigator.share({ url: tempUrl, title: 'Vídeo Capturado' });
-             } finally {
-                URL.revokeObjectURL(tempUrl);
-             }
-          } 
-          // 3. Fallback para Download Direto (Mais confiável)
+          // 2. Fallback para Download Direto (O MAIS CONFIÁVEL)
           else {
             const a = document.createElement('a');
             a.href = finalUrl;
@@ -565,7 +528,9 @@ async function startRecording(){
             document.body.removeChild(a);
           }
         } catch (e) {
-          console.warn('Share failed, fallback to download', e);
+          console.error('Falha ao tentar salvar/compartilhar o vídeo.', e);
+          alert('Falha ao salvar o arquivo. Tente novamente ou verifique as permissões de download.');
+          // Força o download como último recurso
           const a = document.createElement('a');
           a.href = finalUrl;
           a.download = finalFileName;
@@ -575,7 +540,7 @@ async function startRecording(){
         }
       };
 
-      // ** Lógica Refazer Vídeo (Corrigida) **
+      // ** Lógica Refazer Vídeo **
       retryBtn.onclick = () => {
         preview.style.display = 'none';
         previewButtons.style.display = 'none';
@@ -585,7 +550,6 @@ async function startRecording(){
         if (finalUrl && finalUrl !== webmUrl) {
             URL.revokeObjectURL(finalUrl); // Limpa o mp4 se for diferente
         }
-        console.log('Refazer vídeo executado. URLs revogadas.');
       };
     }
   };
@@ -594,7 +558,6 @@ async function startRecording(){
   startTimer();
   recordBtn.classList.add('recording');
 
-  // animation: continuously draw to canvas while recording
   (function anim(){
     if (recorder && recorder.state !== 'inactive') {
       drawToCanvas();
@@ -613,7 +576,6 @@ function stopRecording(){
 /* CONTROLES                                */
 /* -------------------------------------------------------------------------- */
 
-/* ---------- Timer helpers ---------- */
 function startTimer(){
   elapsed = 0;
   timerEl.style.display = 'block';
@@ -630,12 +592,9 @@ function stopTimer(){
   timerEl.style.display = 'none';
 }
 
-/* ---------- Press & hold binding (pointer + touch fallbacks) ---------- */
 (function bindPressHold(){
-  // Prevent default context
   recordBtn.addEventListener('contextmenu', e => e.preventDefault());
 
-  // Iniciar Gravação
   recordBtn.addEventListener('pointerdown', async (e) => {
     e.preventDefault();
     if (!videoReady) {
@@ -644,7 +603,6 @@ function stopTimer(){
     await startRecording();
   });
 
-  // Parar Gravação
   const stopEvents = (e) => {
     e.preventDefault();
     stopRecording();
@@ -652,18 +610,15 @@ function stopTimer(){
   recordBtn.addEventListener('pointerup', stopEvents);
   recordBtn.addEventListener('pointercancel', stopEvents);
 
-  // touch fallback
   recordBtn.addEventListener('touchstart', async (e) => { e.preventDefault(); if (!videoReady) await startCamera(); await startRecording(); }, {passive:false});
   recordBtn.addEventListener('touchend', stopEvents, {passive:false});
   recordBtn.addEventListener('touchcancel', stopEvents, {passive:false});
 
-  // click fallback: quick tap toggles short recording (accessibility)
   recordBtn.addEventListener('click', async (e) => {
     e.preventDefault();
     if (!recorder) {
       if (!videoReady) await startCamera();
       await startRecording();
-      // auto-stop after 3s for click fallback
       setTimeout(()=> stopRecording(), 3000);
     } else {
       stopRecording();
@@ -671,37 +626,27 @@ function stopTimer(){
   });
 })();
 
-/* ---------- Outros Botões de Controle ---------- */
-
-// Botão Ativar Câmera
 enable.addEventListener('click', startCamera);
 
-// Botão Trocar Câmera
 switchBtn.addEventListener('click', async () => {
     usingFront = !usingFront;
     await startCamera();
 });
 
-/* ---------- Ensure preview buttons are clickable (fix pointer-events issues) ---------- */
 previewButtons.addEventListener('click', (e) => {
-  // clicks are handled by saveBtn/retryBtn assigned dynamically; stop propagation
   e.stopPropagation();
 });
 
 /* ---------- Inicialização ---------- */
 
-// Auto-start draw loop (keeps canvas updated in background)
 drawLoop();
 
-// final touch: when page hidden, stop camera
 window.addEventListener('pagehide', () => {
   try {
     if (stream) stream.getTracks().forEach(t=>t.stop());
   } catch(e){}
   stopDrawLoop();
 });
-
-/* --------------------- FIM DO ARQUIVO COMPLETO --------------------- */
 </script>
 </body>
 </html>
