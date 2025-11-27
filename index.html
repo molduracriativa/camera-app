@@ -3,19 +3,19 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Moldura + Foto + Vídeo (Auto Save)</title>
+<title>Moldura - Foto & Vídeo MP4</title>
 
-<!-- FFmpeg para MP4 -->
+<!-- FFmpeg para conversão MP4 -->
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     width:100%; height:100%;
-    background:#000; overflow:hidden;
+    overflow:hidden;
+    background:#000;
     font-family: sans-serif;
-    -webkit-user-select:none;
-    user-select:none;
+    -webkit-user-select:none; user-select:none;
   }
 
   #video, #overlay {
@@ -23,37 +23,45 @@
     width:100vw; height:100vh;
     object-fit:cover;
   }
+
   #overlay { pointer-events:none; }
 
   #buttons {
-    position:absolute; bottom:40px;
-    width:100%; display:flex;
-    justify-content:center; gap:40px;
+    position:absolute;
+    bottom:40px;
+    width:100%;
+    display:flex;
+    justify-content:center;
+    gap:40px;
     z-index:10;
   }
+
   button {
     width:80px; height:80px;
     border-radius:50%; border:none;
-    background:white; font-size:28px;
+    background:white;
+    font-size:28px;
     box-shadow:0 4px 12px rgba(0,0,0,.4);
   }
 
   #msg {
     position:absolute; top:20px; left:0; right:0;
-    text-align:center; color:white;
-    font-weight:bold; z-index:20;
-    font-size:18px;
+    text-align:center; color:white; font-weight:bold;
+    font-size:18px; z-index:20;
   }
+
+  canvas { display:none; }
 </style>
 </head>
+
 <body>
 
 <div id="msg"></div>
 
-<video id="video" autoplay muted playsinline></video>
+<video id="video" autoplay playsinline muted></video>
 <img id="overlay" src="moldura.png">
 
-<canvas id="canvas" style="display:none"></canvas>
+<canvas id="canvas"></canvas>
 
 <div id="buttons">
   <button id="photoBtn">📸</button>
@@ -78,7 +86,7 @@ let recorder = null;
 let chunks = [];
 
 /* =======================================================
-    1) INICIAR CÂMERA AUTOMÁTICO
+    ABRIR CÂMERA AUTOMÁTICO
 ======================================================= */
 async function startCamera() {
   if (stream) stream.getTracks().forEach(t=>t.stop());
@@ -115,7 +123,7 @@ switchBtn.onclick = ()=>{ usingFront = !usingFront; startCamera(); };
 
 
 /* =======================================================
-    2) FOTO AUTOMÁTICA E SALVA AUTOMÁTICO
+    FOTO COM MOLDURA — SALVAMENTO AUTOMÁTICO
 ======================================================= */
 photoBtn.onclick = async ()=> {
   const track = stream.getVideoTracks()[0];
@@ -138,7 +146,6 @@ photoBtn.onclick = async ()=> {
 
   const dataUrl = canvas.toDataURL("image/png");
 
-  // salvar automático
   const a = document.createElement("a");
   a.href = dataUrl;
   a.download = "foto.png";
@@ -150,7 +157,7 @@ photoBtn.onclick = async ()=> {
 
 
 /* =======================================================
-    3) VÍDEO COM MOLDURA + ÁUDIO + MP4 SALVAMENTO AUTOMÁTICO
+    GRAVAÇÃO DE VÍDEO MP4 (100% CORRIGIDO)
 ======================================================= */
 recordBtn.onclick = async ()=>{
   if (recorder && recorder.state === "recording") {
@@ -162,54 +169,55 @@ recordBtn.onclick = async ()=>{
   chunks = [];
 
   const canvasStream = canvas.captureStream(30);
-  const audio = stream.getAudioTracks()[0];
-  if (audio) canvasStream.addTrack(audio);
+  const audioTrack = stream.getAudioTracks()[0];
+  if (audioTrack) canvasStream.addTrack(audioTrack);
 
-  recorder = new MediaRecorder(canvasStream, { mimeType: "video/webm" });
+  const options = { mimeType:"video/webm; codecs=vp8" };
+  recorder = new MediaRecorder(canvasStream, options);
 
   recorder.ondataavailable = (e)=>{ if(e.data.size>0) chunks.push(e.data); };
 
-  recorder.onstop = async ()=>{
+  recorder.onstop = async ()=> {
     msg.innerHTML = "Convertendo MP4...";
 
-    const webmBlob = new Blob(chunks, {type:"video/webm"});
+    const webmBlob = new Blob(chunks, { type:"video/webm" });
 
-    // FFmpeg
     const ff = FFmpeg.createFFmpeg({ log:false });
+
     await ff.load();
 
-    ff.FS("writeFile", "input.webm", await FFmpeg.fetchFile(webmBlob));
+    ff.FS("writeFile", "in.webm", await FFmpeg.fetchFile(webmBlob));
 
     await ff.run(
-      "-i","input.webm",
+      "-i","in.webm",
       "-c:v","libx264",
       "-preset","veryfast",
+      "-pix_fmt","yuv420p",
+      "-profile:v","baseline",
+      "-level","3.0",
+      "-movflags","faststart",
       "-c:a","aac",
       "-b:a","128k",
       "out.mp4"
     );
 
     const mp4 = ff.FS("readFile","out.mp4");
-    const blob = new Blob([mp4.buffer],{type:"video/mp4"});
-    const url = URL.createObjectURL(blob);
+    const mp4Blob = new Blob([mp4.buffer], {type:"video/mp4"});
+    const url = URL.createObjectURL(mp4Blob);
 
-    // baixar automático
     const a = document.createElement("a");
     a.href = url;
     a.download = "video.mp4";
     a.click();
 
     msg.innerHTML = "Vídeo salvo!";
-    setTimeout(()=> msg.innerHTML="", 1500);
-
+    setTimeout(()=> msg.innerHTML="", 1800);
   };
 
-  recorder.start();
-
-  /* LOOP DE DESENHO */
+  recorder.start(100);
 
   function loop(){
-    if (recorder && recorder.state === "recording") {
+    if (recorder && recorder.state==="recording") {
       drawFrame();
       requestAnimationFrame(loop);
     }
@@ -217,7 +225,8 @@ recordBtn.onclick = async ()=>{
   loop();
 };
 
-/* Desenha vídeo + moldura no canvas */
+
+/* DESENHAR FRAME + MOLDURA NO CANVAS */
 function drawFrame(){
   const track = stream.getVideoTracks()[0];
   const { width, height } = track.getSettings();
@@ -231,6 +240,7 @@ function drawFrame(){
     ctx.translate(width,0);
     ctx.scale(-1,1);
   }
+
   ctx.drawImage(video,0,0,width,height);
 
   ctx.setTransform(1,0,0,1,0,0);
