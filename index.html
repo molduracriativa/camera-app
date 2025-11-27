@@ -3,35 +3,97 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Câmera (Final Corrigido)</title>
+<title>Moldura Criativa - Câmera Final</title>
 
-<!-- FFmpeg para conversão MP4 -->
+<!-- FFmpeg MP4 -->
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
+  *{margin:0;padding:0;box-sizing:border-box;}
   html,body{
-    width:100%;height:100%;background:#000;color:#fff;
+    width:100%;height:100%;
+    background:#000;
+    overflow:hidden;
     font-family:system-ui,-apple-system;
     -webkit-user-select:none;user-select:none;
-    -webkit-touch-callout:none; touch-action:manipulation;
-    overflow:hidden;
+    -webkit-touch-callout:none;
+    touch-action:manipulation;
   }
 
-  #video{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:1;pointer-events:none}
-  #frame{position:fixed;inset:0;width:100vw;height:100vh;object-fit:contain;z-index:3;pointer-events:none}
-  #enable{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:#fff;color:#000;padding:16px 26px;border-radius:12px;border:none;z-index:10}
-  #controls{position:fixed;left:0;right:0;bottom:28px;display:none;justify-content:center;gap:36px;z-index:10}
-  .btn{width:78px;height:78px;border-radius:50%;background:#fff;border:none;font-size:28px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 18px rgba(0,0,0,0.4)}
-  .btn.recording{background:#e53935;color:#fff}
+  #video{
+    position:fixed;inset:0;
+    width:100vw;height:100vh;
+    object-fit:cover;
+    z-index:1;
+    pointer-events:none;
+  }
 
-  #timer{position:fixed;top:18px;left:50%;transform:translateX(-50%);font-size:22px;z-index:15;display:none}
-  #preview{position:fixed;inset:0;background:#000;display:none;align-items:center;justify-content:center;z-index:30}
-  #preview video,#preview img{max-width:100%;max-height:100%;object-fit:contain}
-  #preview-buttons{position:fixed;bottom:28px;left:0;right:0;display:none;justify-content:center;gap:28px;z-index:35}
-  .pbtn{background:#fff;color:#000;border:none;padding:12px 20px;border-radius:10px;font-size:18px}
-  /* avoid selection / long-press */
-  button{ -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  #frame{
+    position:fixed;inset:0;
+    width:100vw;height:100vh;
+    object-fit:contain;
+    z-index:3;
+    pointer-events:none;
+  }
+
+  #enable{
+    position:fixed;left:50%;top:50%;
+    transform:translate(-50%,-50%);
+    background:#fff;color:#000;
+    padding:18px 28px;border:none;
+    border-radius:12px;
+    font-size:20px;
+    z-index:20;
+  }
+
+  #controls{
+    position:fixed;bottom:30px;left:0;right:0;
+    display:none;justify-content:center;
+    gap:40px;z-index:10;
+  }
+
+  .btn{
+    width:80px;height:80px;
+    background:#fff;border-radius:50%;
+    border:none;font-size:30px;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 0 20px #0008;
+  }
+
+  #timer{
+    position:fixed;top:20px;
+    left:50%;transform:translateX(-50%);
+    font-size:28px;
+    color:#fff;display:none;
+    z-index:20;font-weight:600;
+  }
+
+  #preview{
+    position:fixed;inset:0;z-index:30;
+    background:#000;
+    display:none;
+    justify-content:center;
+    align-items:center;
+  }
+
+  #preview video,#preview img{
+    max-width:100%;
+    max-height:100%;
+    object-fit:contain;
+  }
+
+  #preview-buttons{
+    position:fixed;bottom:30px;left:0;right:0;
+    display:none;justify-content:center;
+    gap:40px;z-index:40;
+  }
+
+  .pbtn{
+    padding:16px 28px;
+    background:#fff;border:none;
+    border-radius:12px;
+    font-size:20px;color:#000;
+  }
 </style>
 </head>
 <body>
@@ -39,7 +101,7 @@
 <button id="enable">Ativar Câmera</button>
 
 <video id="video" autoplay playsinline muted></video>
-<img id="frame" src="assets/moldura.png" alt="moldura"/>
+<img id="frame" src="assets/moldura.png"/>
 
 <canvas id="canvas" width="1080" height="1920" style="display:none"></canvas>
 
@@ -51,7 +113,6 @@
 
 <div id="timer">0.0s</div>
 
-<!-- Preview fullscreen -->
 <div id="preview">
   <video id="previewVideo" controls playsinline style="display:none"></video>
   <img id="previewPhoto" style="display:none"/>
@@ -63,312 +124,292 @@
 </div>
 
 <script>
-/* ===== Elements ===== */
-const enable = document.getElementById('enable');
-const video = document.getElementById('video');
-const frame = document.getElementById('frame');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+let stream=null;
+let usingFront=true;
+let recorder=null;
+let chunks=[];
+let elapsed=0;
+let timerInt=null;
+let videoReady=false;
 
-const controls = document.getElementById('controls');
-const switchBtn = document.getElementById('switch');
-const photoBtn = document.getElementById('photo');
-const recordBtn = document.getElementById('record');
+const video=document.getElementById("video");
+const frame=document.getElementById("frame");
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
 
-const timerEl = document.getElementById('timer');
-const preview = document.getElementById('preview');
-const previewVideo = document.getElementById('previewVideo');
-const previewPhoto = document.getElementById('previewPhoto');
-const previewButtons = document.getElementById('preview-buttons');
-const saveBtn = document.getElementById('save');
-const retryBtn = document.getElementById('retry');
+const preview=document.getElementById("preview");
+const previewVideo=document.getElementById("previewVideo");
+const previewPhoto=document.getElementById("previewPhoto");
+const previewButtons=document.getElementById("preview-buttons");
+const timerEl=document.getElementById("timer");
 
-let stream = null;
-let usingFront = true;
-let recorder = null;
-let recordedChunks = [];
-let recording = false;
-let timerInterval = null;
-let elapsed = 0;
-
-/* Prevent default long-press context on mobile */
-document.addEventListener('contextmenu', e => e.preventDefault());
-
-/* ===== Start camera ===== */
+const enable=document.getElementById("enable");
+const controls=document.getElementById("controls");
+/* ============================================================
+   FUNÇÃO PRINCIPAL: ABRIR CÂMERA E ESPERAR METADADOS
+   ============================================================ */
 async function startCamera(){
-  try {
-    if (stream) stream.getTracks().forEach(t=>t.stop());
+  try{
+    videoReady = false;
+
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: true
+      video:{ facingMode: usingFront ? "user" : "environment" },
+      audio:true
     });
+
     video.srcObject = stream;
     video.muted = true;
-    video.setAttribute('playsinline', '');
+    video.setAttribute("playsinline","");
+
+    // 🔥 ESSENCIAL: esperar videoWidth/videoHeight
+    await new Promise(res => {
+      video.onloadedmetadata = () => {
+        videoReady = true;
+        res();
+      };
+    });
+
     await video.play();
 
-    enable.style.display = 'none';
-    controls.style.display = 'flex';
-  } catch (err) {
+    enable.style.display="none";
+    controls.style.display="flex";
+
+  }catch(err){
     console.error(err);
-    alert('Erro ao abrir câmera: ' + (err && err.message ? err.message : err));
+    alert("Erro ao abrir a câmera: " + err.message);
   }
 }
-enable.addEventListener('click', startCamera);
-switchBtn.addEventListener('click', async () => { usingFront = !usingFront; await startCamera(); });
 
-/* ===== Draw video + frame to canvas (1080x1920) ===== */
+enable.onclick = () => startCamera();
+
+document.getElementById("switch").onclick = async () => {
+  usingFront = !usingFront;
+  await startCamera();
+};
+
+/* ============================================================
+   DESENHAR VÍDEO + MOLDURA NO CANVAS
+   ============================================================ */
 function drawToCanvas(){
-  const vw = video.videoWidth || canvas.width;
-  const vh = video.videoHeight || canvas.height;
+  if(!videoReady) return;
 
-  // logical canvas already 1080x1920
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+
   canvas.width = 1080;
   canvas.height = 1920;
 
-  // fill black
-  ctx.fillStyle = '#000';
+  ctx.fillStyle="#000";
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
-  // scale video to fill height
   const scale = canvas.height / vh;
-  const drawW = vw * scale;
-  const drawH = canvas.height;
-  const dx = (canvas.width - drawW) / 2;
+  const dw = vw * scale;
+  const dh = canvas.height;
+  const dx = (canvas.width - dw) / 2;
 
-  if (usingFront) {
+  if(usingFront){
     ctx.save();
-    ctx.translate(dx + drawW, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, vw, vh, 0, 0, drawW, drawH);
+    ctx.translate(dx + dw, 0);
+    ctx.scale(-1,1);
+    ctx.drawImage(video, 0,0,vw,vh, 0,0,dw,dh);
     ctx.restore();
-  } else {
-    ctx.drawImage(video, 0, 0, vw, vh, dx, 0, drawW, drawH);
+  }else{
+    ctx.drawImage(video, 0,0,vw,vh, dx,0,dw,dh);
   }
 
-  // draw frame scaled by height
-  if (frame && frame.naturalWidth) {
-    const fw = frame.naturalWidth;
-    const fh = frame.naturalHeight;
+  if(frame.naturalWidth){
+    const fw=frame.naturalWidth;
+    const fh=frame.naturalHeight;
     const fScale = canvas.height / fh;
-    const fW = fw * fScale;
-    const fDX = (canvas.width - fW) / 2;
-    ctx.drawImage(frame, 0, 0, fw, fh, fDX, 0, fW, canvas.height);
+    const fdw = fw * fScale;
+    const fdx = (canvas.width - fdw) / 2;
+
+    ctx.drawImage(frame,0,0,fw,fh, fdx,0,fdw,canvas.height);
   }
 }
 
-/* ===== PHOTO capture ===== */
-photoBtn.addEventListener('click', () => {
-  // ensure video metadata available
-  if (!video.videoWidth) { alert('Aguardando câmera...'); return; }
+/* ============================================================
+   FOTO
+   ============================================================ */
+document.getElementById("photo").onclick = () => {
+  if(!videoReady){ alert("Aguarde a câmera abrir."); return; }
+
   drawToCanvas();
-  const dataUrl = canvas.toDataURL('image/png');
+  const dataUrl = canvas.toDataURL("image/png");
 
-  // show preview fullscreen
-  preview.style.display = 'flex';
-  previewPhoto.style.display = 'block';
+  preview.style.display="flex";
+  previewButtons.style.display="flex";
+
+  previewVideo.style.display="none";
+  previewPhoto.style.display="block";
   previewPhoto.src = dataUrl;
-  previewVideo.style.display = 'none';
-  previewButtons.style.display = 'flex';
 
-  // bind save/refazer for photo
   saveBtn.onclick = () => {
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = 'foto.png';
+    const a=document.createElement("a");
+    a.href=dataUrl;
+    a.download="foto.png";
     a.click();
   };
-  retryBtn.onclick = () => {
-    preview.style.display = 'none';
-    previewButtons.style.display = 'none';
-    previewPhoto.src = '';
-  };
-});
 
-/* ===== RECORDING helpers ===== */
+  retryBtn.onclick = () => {
+    preview.style.display="none";
+    previewButtons.style.display="none";
+    previewPhoto.src="";
+  };
+};
+
+/* ============================================================
+   TIMER
+   ============================================================ */
 function startTimer(){
   elapsed = 0;
-  timerEl.style.display = 'block';
-  timerEl.textContent = '0.0s';
-  timerInterval = setInterval(()=>{
+  timerEl.style.display="block";
+
+  timerInt = setInterval(()=>{
     elapsed += 0.1;
-    timerEl.textContent = elapsed.toFixed(1) + 's';
+    timerEl.textContent = elapsed.toFixed(1) + "s";
   },100);
 }
+
 function stopTimer(){
-  clearInterval(timerInterval);
-  timerInterval = null;
-  timerEl.style.display = 'none';
-  timerEl.textContent = '0.0s';
+  clearInterval(timerInt);
+  timerEl.style.display="none";
 }
 
-/* Start recording: set up MediaRecorder on canvas stream */
+/* ============================================================
+   GRAVAR (PRESSIONAR E SEGURAR)
+   ============================================================ */
 async function startRecording(){
-  if (!video.videoWidth || !stream) { alert('Abra a câmera primeiro'); return; }
+  if(!videoReady){
+    console.log("Video not ready");
+    return;
+  }
 
-  // ensure canvas has content before capture
   drawToCanvas();
 
   const canvasStream = canvas.captureStream(30);
-  // add audio track if available
-  const audioTracks = stream.getAudioTracks();
-  if (audioTracks && audioTracks.length) {
-    try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('could not add audio', e); }
-  }
+  const audioTrack = stream.getAudioTracks()[0];
+  if(audioTrack) canvasStream.addTrack(audioTrack);
 
-  recordedChunks = [];
-  // choose a sensible mime (fallbacks handled by browser)
+  chunks = [];
   let options = {};
-  const preferred = 'video/webm;codecs=vp8,opus';
-  try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(preferred)) options.mimeType = preferred; } catch(e){}
+
+  const mime='video/webm;codecs=vp8,opus';
+  if(MediaRecorder.isTypeSupported(mime)) options.mimeType=mime;
 
   recorder = new MediaRecorder(canvasStream, options);
+  recorder.ondataavailable = e => { if(e.data.size>0) chunks.push(e.data); };
 
-  recorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
   recorder.onstop = async () => {
-    // stop timer
     stopTimer();
-    recordBtn.classList.remove('recording');
 
-    const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+    const webmBlob = new Blob(chunks, {type:"video/webm"});
 
-    // convert with ffmpeg
-    try {
-      // show preview while converting (spinner could be added)
-      showConvertingUI(true);
-      const ffmpeg = FFmpeg.createFFmpeg({ log: false });
+    preview.style.display="flex";
+    previewButtons.style.display="flex";
+    previewVideo.style.display="block";
+    previewPhoto.style.display="none";
+
+    try{
+      const ffmpeg = FFmpeg.createFFmpeg({log:false});
       await ffmpeg.load();
-
-      const data = await FFmpeg.fetchFile(webmBlob);
-      ffmpeg.FS('writeFile','input.webm',data);
+      ffmpeg.FS('writeFile','input.webm', await FFmpeg.fetchFile(webmBlob));
 
       await ffmpeg.run(
-        '-i','input.webm',
-        '-c:v','libx264',
-        '-preset','veryfast',
-        '-crf','23',
-        '-c:a','aac',
-        '-b:a','128k',
-        '-movflags','faststart',
-        'output.mp4'
+        "-i","input.webm",
+        "-c:v","libx264",
+        "-preset","veryfast",
+        "-crf","23",
+        "-c:a","aac",
+        "-b:a","128k",
+        "-movflags","faststart",
+        "output.mp4"
       );
 
       const mp4Data = ffmpeg.FS('readFile','output.mp4');
-      const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
-
+      const mp4Blob = new Blob([mp4Data.buffer], {type:"video/mp4"});
       const url = URL.createObjectURL(mp4Blob);
-      previewVideo.src = url;
-      previewVideo.style.display = 'block';
-      previewPhoto.style.display = 'none';
-      preview.style.display = 'flex';
-      previewButtons.style.display = 'flex';
 
-      // Save handler
+      previewVideo.src = url;
+
       saveBtn.onclick = () => {
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'video.mp4';
+        const a=document.createElement("a");
+        a.href=url;
+        a.download="video.mp4";
         a.click();
       };
-      // Retry handler
+
       retryBtn.onclick = () => {
-        preview.style.display = 'none';
-        previewButtons.style.display = 'none';
+        preview.style.display="none";
+        previewButtons.style.display="none";
         previewVideo.pause();
-        previewVideo.src = '';
+        previewVideo.src="";
       };
 
-      // cleanup ffmpeg FS
-      try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
-    } catch (e) {
-      console.error('FFmpeg conversion error', e);
-      // fallback: show webm
-      const webmUrl = URL.createObjectURL(webmBlob);
-      previewVideo.src = webmUrl;
-      previewVideo.style.display = 'block';
-      previewPhoto.style.display = 'none';
-      preview.style.display = 'flex';
-      previewButtons.style.display = 'flex';
-      saveBtn.onclick = () => { const a = document.createElement('a'); a.href = webmUrl; a.download = 'video.webm'; a.click(); };
-      retryBtn.onclick = () => { preview.style.display = 'none'; previewButtons.style.display = 'none'; previewVideo.pause(); previewVideo.src=''; };
-    } finally {
-      showConvertingUI(false);
-      recorder = null;
+    }catch(e){
+      console.error("FFmpeg error", e);
+      const url=URL.createObjectURL(webmBlob);
+      previewVideo.src=url;
     }
+
+    recorder=null;
   };
 
   recorder.start();
   startTimer();
-  recordBtn.classList.add('recording');
 }
 
-/* Stop recording */
+/* Stop Recording */
 function stopRecording(){
-  if (recorder && recorder.state !== 'inactive') recorder.stop();
-}
-
-/* small UI helper while converting */
-function showConvertingUI(show){
-  if (show) {
-    timerEl.style.display = 'block';
-    timerEl.textContent = 'Convertendo...';
-  } else {
-    timerEl.style.display = 'none';
+  if(recorder && recorder.state !== "inactive"){
+    recorder.stop();
   }
 }
 
-/* ===== Wire pointer events for press-and-hold behavior ===== */
-/* Use pointerdown/pointerup and also touchcancel to be robust */
-function bindPressHold(targetStart, targetEnd){
-  // pointer events
-  targetStart.addEventListener('pointerdown', async (e) => {
-    e.preventDefault();
-    // ensure canvas has a frame before starting
-    drawToCanvas();
-    await startRecording();
-  });
-  targetStart.addEventListener('pointerup', (e) => {
-    e.preventDefault();
-    stopRecording();
-  });
-  targetStart.addEventListener('pointercancel', (e)=> { e.preventDefault(); stopRecording(); });
-  // fallback for touch events on some older browsers
-  targetStart.addEventListener('touchstart', async (e) => { e.preventDefault(); drawToCanvas(); await startRecording(); }, {passive:false});
-  targetStart.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
-  targetStart.addEventListener('touchcancel', (e)=> { e.preventDefault(); stopRecording(); });
-}
+/* ============================================================
+   CONTROLES PRESS & HOLD
+   ============================================================ */
+const recordBtn=document.getElementById("record");
 
-/* attach to record button */
-bindPressHold(recordBtn);
+// Prevenir clique padrão
+recordBtn.addEventListener("click", e => e.preventDefault());
 
-/* also allow keyboard / click fallback: click to toggle */
-recordBtn.addEventListener('click', (e) => {
-  // if click happens without pointerdown/up sequence, toggle record for accessibility
-  if (!recorder) {
-    // start and stop after short delay if user just clicks — fallback: start then stop after 3s
-    (async () => {
-      drawToCanvas();
-      await startRecording();
-      setTimeout(() => stopRecording(), 3000);
-    })();
-  }
+// Início da gravação
+recordBtn.addEventListener("pointerdown", async e => {
+  e.preventDefault();
+  await startRecording();
 });
 
-/* Prevent multiple fast clicks from hiding preview buttons incorrectly */
-saveBtn.addEventListener('click', () => {
-  // handler replaced dynamically when appropriate (photo/video)
-});
-retryBtn.addEventListener('click', () => {
-  // handler replaced dynamically when appropriate
+// Soltar → parar gravação
+recordBtn.addEventListener("pointerup", e => {
+  e.preventDefault();
+  stopRecording();
 });
 
-/* Clean up on pagehide */
-window.addEventListener('pagehide', () => {
-  try { if (stream) stream.getTracks().forEach(t=>t.stop()); } catch(e){}
-  stopTimer();
+// Cancelar (dedo arrasta pra fora)
+recordBtn.addEventListener("pointercancel", e => {
+  e.preventDefault();
+  stopRecording();
 });
 
-/* End of script */
+// Fallback para touchstart/end
+recordBtn.addEventListener("touchstart", async e => {
+  e.preventDefault();
+  await startRecording();
+},{passive:false});
+
+recordBtn.addEventListener("touchend", e => {
+  e.preventDefault();
+  stopRecording();
+},{passive:false});
+
+recordBtn.addEventListener("touchcancel", e => {
+  e.preventDefault();
+  stopRecording();
+},{passive:false});
+
 </script>
 </body>
 </html>
