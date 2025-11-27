@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Molduracamera</title>
+<title>Moldura Criativa - Câmera</title>
+
+<!-- FFmpeg para gerar MP4 -->
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
   *{margin:0;padding:0;box-sizing:border-box;}
@@ -25,6 +28,7 @@
     pointer-events:none;
   }
 
+  /* Moldura */
   #frame{
     position:fixed;inset:0;
     width:100vw;height:100vh;
@@ -33,6 +37,7 @@
     pointer-events:none;
   }
 
+  /* Botão ativar câmera */
   #enable{
     position:fixed;left:50%;top:50%;
     transform:translate(-50%,-50%);
@@ -41,10 +46,11 @@
     font-size:20px;z-index:10;
   }
 
+  /* Controles */
   #controls{
     position:fixed;bottom:30px;left:0;right:0;
     display:flex;justify-content:center;gap:40px;
-    z-index:10;pointer-events:auto;
+    z-index:10;
   }
 
   .btn{
@@ -52,7 +58,6 @@
     background:#fff;border-radius:50%;
     border:none;font-size:28px;
     display:flex;align-items:center;justify-content:center;
-    pointer-events:auto;
   }
 </style>
 </head>
@@ -64,7 +69,7 @@
 
 <img id="frame" src="assets/moldura.png"/>
 
-<!-- CANVAS para foto e vídeo -->
+<!-- Canvas de renderização -->
 <canvas id="canvas" style="display:none"></canvas>
 
 <div id="controls" style="display:none">
@@ -91,9 +96,7 @@ document.addEventListener("touchstart",()=>{}, {passive:true});
 document.addEventListener("click",()=>{}, true);
 
 
-/* ------------------------------
-   Abrir câmera (rápido)
---------------------------------*/
+/* ⛔ ABRIR CÂMERA */
 async function startCam(){
   if(stream) stream.getTracks().forEach(t=>t.stop());
 
@@ -112,43 +115,35 @@ async function startCam(){
 enable.onclick=()=>startCam();
 
 
-/* ------------------------------
-   Trocar câmera
---------------------------------*/
+/* 🔄 TROCAR CÂMERA */
 document.getElementById("switch").onclick=async()=>{
   front=!front;
   await startCam();
 };
 
 
-/* ---------------------------------------------
-   Função que desenha VIDEO + MOLDURA no CANVAS
-----------------------------------------------*/
+/* 🖼️ DESENHAR VÍDEO + MOLDURA NO CANVAS */
 function drawToCanvas(){
   const vw = video.videoWidth;
   const vh = video.videoHeight;
 
-  // ratio 9:16
   canvas.width = 1080;
   canvas.height = 1920;
 
-  // vídeo desenhado proporcional pelo height
   const scale = canvas.height / vh;
   const dw = vw * scale;
   const dh = canvas.height;
   const dx = (canvas.width - dw) / 2;
 
-  // desenhar vídeo (espelhar se frontal)
   if(front){
     ctx.save();
     ctx.scale(-1,1);
     ctx.drawImage(video,-dx-dw,0,dw,dh);
     ctx.restore();
-  }else{
+  } else {
     ctx.drawImage(video,dx,0,dw,dh);
   }
 
-  // desenhar moldura
   const fw = frame.naturalWidth;
   const fh = frame.naturalHeight;
   const fScale = canvas.height / fh;
@@ -159,14 +154,9 @@ function drawToCanvas(){
 }
 
 
-/* ------------------------------
-   Tirar FOTO com moldura
---------------------------------*/
+/* 📸 FOTO */
 document.getElementById("photo").onclick=()=>{
-  if(!video.videoWidth) return;
-
-  drawToCanvas(); // aplica moldura
-
+  drawToCanvas();
   const a=document.createElement("a");
   a.href=canvas.toDataURL("image/png");
   a.download="foto.png";
@@ -174,40 +164,55 @@ document.getElementById("photo").onclick=()=>{
 };
 
 
-/* ------------------------------
-   Gravar VÍDEO com moldura (rápido)
---------------------------------*/
-document.getElementById("record").onclick=()=>{
+/* 🎥 VÍDEO EM MP4 (H.264 + AAC) */
+document.getElementById("record").onclick = async () => {
 
-  if(!recorder){
-    // gravar direto do canvas
-    const streamCanvas = canvas.captureStream(30); 
+  if (!recorder) {
 
-    // adicionar áudio
+    const canvasStream = canvas.captureStream(30);
     const audioTracks = stream.getAudioTracks();
-    if(audioTracks.length>0){
-      streamCanvas.addTrack(audioTracks[0]);
-    }
+    if(audioTracks.length>0) canvasStream.addTrack(audioTracks[0]);
 
-    chunks=[];
-    recorder=new MediaRecorder(streamCanvas);
+    chunks = [];
+    recorder = new MediaRecorder(canvasStream, { mimeType:"video/webm" });
 
-    recorder.ondataavailable=e=>chunks.push(e.data);
+    recorder.ondataavailable = e => chunks.push(e.data);
 
-    recorder.onstop=()=>{
-      const blob=new Blob(chunks,{type:"video/webm"});
-      const url=URL.createObjectURL(blob);
+    recorder.onstop = async () => {
 
+      const webmBlob = new Blob(chunks,{type:"video/webm"});
+
+      const ffmpeg = FFmpeg.createFFmpeg({ log:false });
+      await ffmpeg.load();
+
+      const data = await FFmpeg.fetchFile(webmBlob);
+      ffmpeg.FS("writeFile","input.webm",data);
+
+      await ffmpeg.run(
+        "-i","input.webm",
+        "-c:v","libx264",
+        "-preset","veryfast",
+        "-crf","23",
+        "-c:a","aac",
+        "-b:a","128k",
+        "-movflags","faststart",
+        "output.mp4"
+      );
+
+      const mp4Data = ffmpeg.FS("readFile","output.mp4");
+      const mp4Blob = new Blob([mp4Data.buffer], { type:"video/mp4" });
+
+      const url = URL.createObjectURL(mp4Blob);
       const a=document.createElement("a");
       a.href=url;
-      a.download="video.webm";
+      a.download="video.mp4";
       a.click();
 
       recorder=null;
       document.getElementById("record").textContent="⏺";
     };
 
-    // **ANIMAÇÃO DO CANVAS DURANTE A GRAVAÇÃO**
+
     function anim(){
       if(recorder){
         drawToCanvas();
@@ -224,6 +229,5 @@ document.getElementById("record").onclick=()=>{
   }
 };
 </script>
-
 </body>
 </html>
