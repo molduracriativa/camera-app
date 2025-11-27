@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
 <title>Moldura Criativa - Câmera Final</title>
 
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
+
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
@@ -95,7 +97,18 @@
       z-index: 50;
   }
   
-  /* --- ESTILOS DA PRÉVIA REINTRODUZIDOS --- */
+  #loading-overlay:after {
+      content: '';
+      width: 40px;
+      height: 40px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-top: 15px;
+  }
+  
+  /* --- ESTILOS DA PRÉVIA --- */
   #preview {
     position:fixed; inset:0;
     background:#000;
@@ -173,34 +186,40 @@
   <button id="retry" class="pbtn">Refazer</button>
 </div>
 
-<div id="loading-overlay">Processando e Salvando...</div>
+<div id="loading-overlay">Carregando...</div>
 
 
 <script>
+// --- Variáveis Globais ---
 let stream=null;
 let usingFront=true;
 let recorder=null;
-let chunks=[];
 let elapsed=0;
 let timerInt=null;
 let videoReady=false;
 let drawInterval = null; 
 
+// --- Configuração FFmpeg ---
+const { createFFmpeg, fetchFile } = FFmpeg;
+const ffmpeg = createFFmpeg({ 
+    log: false, // Mude para true se precisar de debug no console
+    corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.5/dist/ffmpeg-core.js' 
+});
+let ffmpegLoaded = false;
+
+
+// --- Elementos DOM ---
 const video=document.getElementById("video");
 const frame=document.getElementById("frame");
 const canvas=document.getElementById("canvas");
 const ctx=canvas.getContext("2d");
-
 const timerEl=document.getElementById("timer");
 const enable=document.getElementById("enable");
 const controls=document.getElementById("controls");
 const loadingOverlay = document.getElementById("loading-overlay");
-
 const switchBtn = document.getElementById('switch');
 const photoBtn = document.getElementById('photo');
 const recordBtn = document.getElementById('record');
-
-// Elementos da prévia REINTRODUZIDOS
 const preview=document.getElementById("preview");
 const previewVideo=document.getElementById("previewVideo");
 const previewPhoto=document.getElementById("previewPhoto");
@@ -213,12 +232,28 @@ const retryBtn=document.getElementById("retry");
 /* FUNÇÕES DE UTILITY                               */
 /* -------------------------------------------------------------------------- */
 
-// Função unificada para SALVAR quando o botão é CLICADO
-async function handleSave(blob, fileName, fileType) {
+// Função para carregar o FFmpeg apenas quando necessário
+async function loadFFmpeg() {
+    if (!ffmpegLoaded) {
+        loadingOverlay.style.display = 'flex';
+        loadingOverlay.textContent = 'Preparando o conversor de vídeo (MP4)...';
+        try {
+            await ffmpeg.load();
+            ffmpegLoaded = true;
+        } catch (e) {
+            console.error('Falha ao carregar FFmpeg:', e);
+            alert('Erro: Não foi possível carregar o conversor de MP4. A gravação falhará.');
+        }
+        loadingOverlay.style.display = 'none';
+    }
+}
+
+// Função unificada para SALVAR
+async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
     saveBtn.disabled = true;
     retryBtn.disabled = true;
     loadingOverlay.style.display = 'flex';
-    loadingOverlay.textContent = 'Processando e Salvando...';
+    loadingOverlay.textContent = 'Finalizando salvamento...';
     
     try {
         const file = new File([blob], fileName, { type: fileType });
@@ -228,13 +263,12 @@ async function handleSave(blob, fileName, fileType) {
             console.log('Tentando Web Share...');
             await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
             
-            // Se o compartilhamento foi bem-sucedido, volta para a câmera
             handleRetry(); 
             return; 
         }
 
         // Tenta 2: Download Direto (Gatilho de download mais robusto)
-        const url = URL.createObjectURL(blob);
+        const url = finalUrlToRevoke || URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = fileName;
@@ -255,7 +289,6 @@ async function handleSave(blob, fileName, fileType) {
         alert(`Falha ao salvar o arquivo. O navegador pode ter negado a permissão de download. Tente novamente ou use Chrome/Firefox.`);
         saveBtn.disabled = false;
         retryBtn.disabled = false;
-        loadingOverlay.style.display = 'none';
     } finally {
         loadingOverlay.style.display = 'none';
     }
@@ -269,8 +302,8 @@ function handleRetry() {
     previewPhoto.src = '';
     previewVideo.src = '';
     previewVideo.pause();
-    saveBtn.onclick = null; // Limpa o handler
-    retryBtn.onclick = null; // Limpa o handler
+    saveBtn.onclick = null; 
+    retryBtn.onclick = null; 
 }
 
 
@@ -287,6 +320,7 @@ async function showFrameWhenReady() {
 }
 
 async function startCamera(){
+  // ... (função startCamera mantida - sem alteração)
   try {
     videoReady = false;
     if (stream) {
@@ -388,8 +422,24 @@ function stopDrawLoop(){
   }
 }
 
+function startTimer(){
+  elapsed = 0;
+  timerEl.style.display = 'block';
+  timerEl.textContent = '0.0s';
+  timerInt = setInterval(()=> {
+    elapsed += 0.1;
+    timerEl.textContent = elapsed.toFixed(1) + 's';
+  },100);
+}
+
+function stopTimer(){
+  clearInterval(timerInt);
+  timerInt = null;
+  timerEl.style.display = 'none';
+}
+
 /* -------------------------------------------------------------------------- */
-/* FOTO (IMAGEM) - AGORA COM PRÉVIA E SALVAMENTO MANUAL                             */
+/* FOTO (IMAGEM)                                                            */
 /* -------------------------------------------------------------------------- */
 
 photoBtn.addEventListener('click', async () => {
@@ -424,7 +474,7 @@ photoBtn.addEventListener('click', async () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* VÍDEO (GRAVAÇÃO) - AGORA COM PRÉVIA E SALVAMENTO MANUAL                             */
+/* VÍDEO (GRAVAÇÃO) - COM CONVERSÃO PARA MP4                             */
 /* -------------------------------------------------------------------------- */
 
 async function startRecording(){
@@ -448,7 +498,6 @@ async function startRecording(){
   if (videoTrack) {
     try {
         videoTrack.applyConstraints({ frameRate: 30, facingMode: usingFront ? 'user' : 'environment' });
-        console.log("Video Track Constraints aplicados com sucesso.");
     } catch(e) {
         console.warn("Falha ao aplicar Video Track Constraints:", e);
     }
@@ -464,13 +513,13 @@ async function startRecording(){
   let recordedChunks = [];
   let options = {};
   
-  // Prioriza o MIME Type mais básico ('video/webm')
+  // Forçar o MIME Type básico (webm) para ser convertido depois
   const mime = 'video/webm'; 
   try { 
       if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
           options.mimeType = mime; 
       } else {
-          options.mimeType = MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm';
+          options.mimeType = 'video/webm'; // Tenta webm por padrão
       }
   } catch(e){}
 
@@ -496,16 +545,64 @@ async function startRecording(){
         alert('Erro: Nenhuma gravação capturada. Tente gravar por mais tempo.');
         return;
     }
-
-    const finalBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     
-    if (finalBlob.size < 1024) { 
-        console.warn('Aviso: O arquivo gravado é muito pequeno. O vídeo pode estar vazio.');
+    // --- INÍCIO DA CONVERSÃO WEBM -> MP4 ---
+    
+    // 1. Cria o Blob WEBM original
+    const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+    
+    // 2. Garante que FFmpeg esteja carregado
+    await loadFFmpeg(); 
+    
+    loadingOverlay.style.display = 'flex';
+    loadingOverlay.textContent = 'Convertendo vídeo para MP4 (aguarde alguns segundos)...';
+    
+    let finalBlob = webmBlob;
+    let fileNameOut = 'video_capturado.webm';
+    let fileType = webmBlob.type;
+    let finalUrl = URL.createObjectURL(finalBlob);
+
+    try {
+        const fileNameIn = 'input.webm';
+        fileNameOut = 'video_capturado.mp4';
+        
+        // Escreve o arquivo WEBM no sistema de arquivos virtual do FFmpeg
+        await ffmpeg.FS('writeFile', fileNameIn, await fetchFile(webmBlob));
+        
+        // Comando de conversão para MP4 (H.264) com alta compatibilidade (-pix_fmt yuv420p)
+        await ffmpeg.run(
+            '-i', fileNameIn, 
+            '-c:v', 'libx264', 
+            '-pix_fmt', 'yuv420p', 
+            '-movflags', '+faststart', 
+            fileNameOut
+        );
+
+        // Lê o arquivo MP4 convertido
+        const data = ffmpeg.FS('readFile', fileNameOut);
+        finalBlob = new Blob([data.buffer], { type: 'video/mp4' });
+        fileType = 'video/mp4';
+
+        // Limpa os arquivos temporários
+        ffmpeg.FS('unlink', fileNameIn);
+        ffmpeg.FS('unlink', fileNameOut);
+        
+        // Revoga o URL antigo e cria o novo para a prévia MP4
+        URL.revokeObjectURL(finalUrl);
+        finalUrl = URL.createObjectURL(finalBlob);
+        
+        console.log('Conversão para MP4 concluída com sucesso!');
+
+    } catch (e) {
+        console.error('Erro na conversão para MP4. Servindo o WEBM original:', e);
+        alert('Atenção: Falha na conversão para MP4. O vídeo será salvo como WEBM e pode dar erro na galeria.');
     }
     
-    const finalUrl = URL.createObjectURL(finalBlob);
-    
-    // Exibir prévia do vídeo
+    loadingOverlay.style.display = 'none';
+
+    // --- FIM DA CONVERSÃO ---
+
+    // Exibir prévia do vídeo (agora em MP4 ou WEBM de fallback)
     preview.style.display = 'flex';
     previewButtons.style.display = 'flex';
     previewPhoto.style.display = 'none';
@@ -520,13 +617,12 @@ async function startRecording(){
 
     // Atribuir lógica de salvamento ao botão Salvar
     saveBtn.onclick = () => {
-        handleSave(finalBlob, 'video_capturado.webm', finalBlob.type);
-        URL.revokeObjectURL(finalUrl); // Limpar o URL quando tentar salvar
+        handleSave(finalBlob, fileNameOut, fileType, finalUrl);
     };
 
     // Atribuir lógica de refazer ao botão Refazer
     retryBtn.onclick = () => {
-        URL.revokeObjectURL(finalUrl); // Limpar o URL
+        URL.revokeObjectURL(finalUrl); 
         handleRetry();
     };
     
@@ -550,24 +646,8 @@ function stopRecording(){
 }
 
 /* -------------------------------------------------------------------------- */
-/* CONTROLES                                */
+/* CONTROLES E INICIALIZAÇÃO (mantidos)                         */
 /* -------------------------------------------------------------------------- */
-
-function startTimer(){
-  elapsed = 0;
-  timerEl.style.display = 'block';
-  timerEl.textContent = '0.0s';
-  timerInt = setInterval(()=> {
-    elapsed += 0.1;
-    timerEl.textContent = elapsed.toFixed(1) + 's';
-  },100);
-}
-
-function stopTimer(){
-  clearInterval(timerInt);
-  timerInt = null;
-  timerEl.style.display = 'none';
-}
 
 (function bindPressHold(){
   recordBtn.addEventListener('contextmenu', e => e.preventDefault());
@@ -612,8 +692,6 @@ switchBtn.addEventListener('click', async () => {
     usingFront = !usingFront;
     await startCamera();
 });
-
-/* ---------- Inicialização ---------- */
 
 drawLoop();
 
