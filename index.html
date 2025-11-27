@@ -16,7 +16,6 @@
     overflow:hidden;
   }
 
-  /* initial button (on top) */
   #enable-btn{
     position:fixed; left:50%; top:50%;
     transform:translate(-50%,-50%);
@@ -27,7 +26,6 @@
     touch-action:manipulation;
   }
 
-  /* raw video (hidden) */
   #video {
     display:none;
     position:fixed; inset:0;
@@ -37,7 +35,6 @@
     pointer-events:none;
   }
 
-  /* canvas (logical 1080x1920). scaled to fit viewport */
   #render-canvas {
     display:none;
     position:fixed; left:50%; top:50%;
@@ -49,10 +46,8 @@
     pointer-events:none;
   }
 
-  /* overlay image loader (hidden) */
   #overlay { display:none; pointer-events:none; }
 
-  /* controls */
   #controls {
     display:none;
     position:fixed;
@@ -61,47 +56,44 @@
     justify-content:center;
     gap:18px;
     z-index:100001;
-    pointer-events:auto;
   }
   .btn {
     width:68px; height:68px; border-radius:50%;
     border:none; background:#fff; color:#000;
     box-shadow:0 8px 20px rgba(0,0,0,0.4);
     font-size:26px; display:flex; align-items:center; justify-content:center;
-    cursor:pointer; pointer-events:auto;
+    cursor:pointer;
   }
   .btn.red{ background:#e53935; color:#fff; }
 
-  /* preview */
   #preview {
     display:none;
     position:fixed;
     left:50%; bottom:120px;
     transform:translateX(-50%);
     z-index:100002;
-    align-items:center; gap:10px; flex-direction:column;
-    pointer-events:auto;
+    align-items:center;
+    gap:10px;
+    flex-direction:column;
   }
   #preview video, #preview img {
     width:86vw; max-width:360px; border-radius:10px;
     border:3px solid #fff; background:#000;
     display:block;
   }
-  .action-save { background:#4CAF50; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-size:16px; cursor:pointer; width:180px; }
+  .action-save {
+    background:#4CAF50; color:#fff;
+    padding:10px 18px; border-radius:8px;
+    border:none; font-size:16px;
+    cursor:pointer; width:180px;
+  }
 
-  /* status */
-  #status { position:fixed; top:12px; left:12px; background:rgba(0,0,0,0.5); padding:8px 10px; border-radius:10px; z-index:100010; font-size:13px; display:none; pointer-events:none; color:#fff; }
-
-  /* ensure controls clickable */
-  #controls, #controls * { pointer-events:auto !important; }
-  #preview, #preview * { pointer-events:auto !important; }
-
-  /* patch to avoid selection/popup on iOS/Android */
-  html, body {
-    -webkit-user-select: none !important;
-    user-select: none !important;
-    -webkit-touch-callout: none !important;
-    touch-action: manipulation !important;
+  #status {
+    position:fixed; top:12px; left:12px;
+    background:rgba(0,0,0,0.5);
+    padding:8px 10px; border-radius:10px;
+    z-index:100010; font-size:13px;
+    display:none; pointer-events:none; color:#fff;
   }
 </style>
 </head>
@@ -115,10 +107,10 @@
 <canvas id="render-canvas" width="1080" height="1920"></canvas>
 
 <div id="controls">
-  <button id="switch-btn" class="btn" title="Trocar câmera">🔄</button>
-  <button id="photo-btn" class="btn" title="Tirar foto">📸</button>
-  <button id="record-btn" class="btn" title="Gravar">🎥</button>
-  <button id="stop-btn" class="btn red" title="Parar" style="display:none">⏹️</button>
+  <button id="switch-btn" class="btn">🔄</button>
+  <button id="photo-btn" class="btn">📸</button>
+  <button id="record-btn" class="btn">🎥</button>
+  <button id="stop-btn" class="btn red" style="display:none">⏹️</button>
 </div>
 
 <div id="preview">
@@ -130,341 +122,333 @@
 
 <div id="status"></div>
 
-<!-- FFmpeg WASM -->
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <script>
-/* Elements */
-const enableBtn = document.getElementById('enable-btn');
-const video = document.getElementById('video');
-const overlayImg = document.getElementById('overlay');
-const canvas = document.getElementById('render-canvas');
-const ctx = canvas.getContext('2d');
+/* ---------- Parte 2: continuação do script ---------- */
 
-const controls = document.getElementById('controls');
-const switchBtn = document.getElementById('switch-btn');
-const photoBtn = document.getElementById('photo-btn');
-const recordBtn = document.getElementById('record-btn');
-const stopBtn = document.getElementById('stop-btn');
+(async () => {
+  /* Elements */
+  const enableBtn = document.getElementById('enable-btn');
+  const video = document.getElementById('video');
+  const overlayImg = document.getElementById('overlay');
+  const canvas = document.getElementById('render-canvas');
+  const ctx = canvas.getContext('2d');
 
-const preview = document.getElementById('preview');
-const previewVideo = document.getElementById('preview-video');
-const previewPhoto = document.getElementById('preview-photo');
-const saveBtn = document.getElementById('save-btn');
-const retryBtn = document.getElementById('retry-btn');
+  const controls = document.getElementById('controls');
+  const switchBtn = document.getElementById('switch-btn');
+  const photoBtn = document.getElementById('photo-btn');
+  const recordBtn = document.getElementById('record-btn');
+  const stopBtn = document.getElementById('stop-btn');
 
-const statusEl = document.getElementById('status');
+  const preview = document.getElementById('preview');
+  const previewVideo = document.getElementById('preview-video');
+  const previewPhoto = document.getElementById('preview-photo');
+  const saveBtn = document.getElementById('save-btn');
+  const retryBtn = document.getElementById('retry-btn');
 
-/* State */
-let stream = null;
-let usingFront = true;
-let drawRAF = null;
-let mediaRecorder = null;
-let recordedChunks = [];
-let ffmpeg = null;
+  const statusEl = document.getElementById('status');
 
-/* Utilities */
-function showStatus(msg, show=true){
-  if(show){ statusEl.style.display='block'; statusEl.textContent = msg; }
-  else statusEl.style.display='none';
-}
-document.addEventListener('touchstart', ()=>{}, {passive:true});
-document.addEventListener('click', ()=>{}, true);
+  /* State */
+  let stream = null;
+  let usingFront = true;
+  let drawRAF = null;
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let ffmpeg = null;
 
-/* Wait for image load */
-function waitForImage(img){
-  return new Promise((res,rej)=>{
-    if(img.complete && img.naturalWidth) return res();
-    img.onload = ()=> res();
-    img.onerror = (e)=> rej(e);
-  });
-}
-
-/* Start camera */
-async function startCamera(){
-  try {
-    if (stream) {
-      stream.getTracks().forEach(t=>t.stop());
-      stream = null;
-    }
-
-    const constraints = {
-      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
-      audio: true
-    };
-
-    showStatus('Abrindo câmera...');
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-
-    video.srcObject = stream;
-    video.muted = true;
-    video.setAttribute('playsinline','');
-    await video.play();
-
-    // ensure overlay loaded
-    try { await waitForImage(overlayImg); } catch(e){ console.warn('overlay load failed', e); }
-
-    // set canvas logical resolution to 1080 x 1920
-    canvas.width = 1080;
-    canvas.height = 1920;
-
-    // show UI
-    video.style.display = 'block';
-    canvas.style.display = 'block';
-    controls.style.display = 'flex';
-    enableBtn.style.display = 'none';
-    showStatus('', false);
-
-    // start rendering frames to canvas
-    startRenderLoop();
-  } catch (err) {
-    console.error('startCamera error', err);
-    alert('Erro ao abrir câmera: ' + (err && err.message ? err.message : err));
-    showStatus('Erro: '+ (err && err.name ? err.name : 'unknown'), true);
-  }
-}
-
-/* Render loop: draw video scaled by height and overlay */
-function startRenderLoop(){
-  if (drawRAF) return;
-
-  function loop(){
-    const W = canvas.width;   // 1080
-    const H = canvas.height;  // 1920
-
-    // clear
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0,0,W,H);
-
-    const vw = video.videoWidth || W;
-    const vh = video.videoHeight || H;
-
-    // scale to fill HEIGHT
-    const scale = H / vh;
-    const drawW = vw * scale;
-    const drawH = H;
-    const dx = (W - drawW) / 2;
-
-    // draw video (mirror only video area if front)
-    if (usingFront) {
-      ctx.save();
-      // translate to left of video region's right edge, flip, draw
-      ctx.translate(dx + drawW, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, vw, vh, 0, 0, drawW, drawH);
-      ctx.restore();
-    } else {
-      ctx.drawImage(video, 0, 0, vw, vh, dx, 0, drawW, drawH);
-    }
-
-    // draw overlay scaled by HEIGHT and centered
-    if (overlayImg && overlayImg.naturalWidth) {
-      const ow = overlayImg.naturalWidth;
-      const oh = overlayImg.naturalHeight;
-      const oScale = H / oh;
-      const oW = ow * oScale;
-      const odx = (W - oW) / 2;
-      ctx.drawImage(overlayImg, 0, 0, ow, oh, odx, 0, oW, H);
-    }
-
-    drawRAF = requestAnimationFrame(loop);
+  function showStatus(msg, show=true){
+    if (show) { statusEl.style.display = 'block'; statusEl.textContent = msg; }
+    else { statusEl.style.display = 'none'; }
   }
 
-  loop();
-}
+  // ensure first touch/click counters on mobile
+  document.addEventListener('touchstart', ()=>{}, {passive:true});
+  document.addEventListener('click', ()=>{}, true);
 
-function stopRenderLoop(){
-  if (drawRAF) { cancelAnimationFrame(drawRAF); drawRAF = null; }
-}
-
-/* Photo capture */
-photoBtn.addEventListener('click', async () => {
-  // Ensure canvas has drawn frame
-  if (!canvas.width || !canvas.height) { alert('Aguardando vídeo...'); return; }
-
-  // create copy at full logical res 1080x1920
-  const tmp = document.createElement('canvas');
-  tmp.width = canvas.width;
-  tmp.height = canvas.height;
-  const tctx = tmp.getContext('2d');
-  tctx.drawImage(canvas, 0, 0);
-
-  // data url
-  const dataUrl = tmp.toDataURL('image/png');
-
-  // preview
-  previewVideo.style.display = 'none';
-  previewPhoto.style.display = 'block';
-  previewPhoto.src = dataUrl;
-  preview.style.display = 'flex';
-  showStatus('Foto pronta', true);
-});
-
-/* Recording: capture canvas stream + audio */
-recordBtn.addEventListener('click', async () => {
-  if (!stream) { alert('Abra a câmera primeiro.'); return; }
-
-  if (!drawRAF) startRenderLoop();
-
-  const canvasStream = canvas.captureStream(30);
-
-  // attach audio track
-  const audioTracks = stream.getAudioTracks();
-  if (audioTracks && audioTracks.length) {
-    canvasStream.addTrack(audioTracks[0]);
+  function waitForImage(img){
+    return new Promise((res, rej) => {
+      if (img.complete && img.naturalWidth) return res();
+      img.onload = () => res();
+      img.onerror = (e) => rej(e);
+    });
   }
 
-  // choose mime
-  let mime = '';
-  const cands = [
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=vp9,opus',
-    'video/webm'
-  ];
-  for (const c of cands) {
-    try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) { mime = c; break; } } catch(e){}
-  }
-
-  try {
-    recordedChunks = [];
-    mediaRecorder = new MediaRecorder(canvasStream, mime ? { mimeType: mime } : undefined);
-
-    mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunks.push(e.data); };
-
-    mediaRecorder.onstart = () => {
-      showStatus('Gravando...');
-      recordBtn.style.display = 'none';
-      stopBtn.style.display = 'inline-block';
-    };
-
-    mediaRecorder.onstop = async () => {
-      showStatus('Finalizando gravação...');
-      const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
-
-      // convert to MP4 via ffmpeg.wasm
-      try {
-        const mp4Blob = await convertWebmToMp4(webmBlob);
-        const url = URL.createObjectURL(mp4Blob);
-        previewVideo.src = url;
-        previewVideo.style.display = 'block';
-        previewPhoto.style.display = 'none';
-        preview.style.display = 'flex';
-        showStatus('Vídeo pronto (MP4)', true);
-      } catch (e) {
-        console.error('FFmpeg failed', e);
-        // fallback: show webm
-        const webmUrl = URL.createObjectURL(webmBlob);
-        previewVideo.src = webmUrl;
-        previewVideo.style.display = 'block';
-        previewPhoto.style.display = 'none';
-        preview.style.display = 'flex';
-        showStatus('Vídeo pronto (WEBM) — conversão falhou', true);
-      } finally {
-        recordBtn.style.display = 'inline-block';
-        stopBtn.style.display = 'none';
+  async function startCamera(){
+    try {
+      if (stream) {
+        stream.getTracks().forEach(t=>t.stop());
+        stream = null;
       }
-    };
 
-    mediaRecorder.start();
-  } catch (err) {
-    console.error('mediaRecorder start error', err);
-    alert('Não foi possível iniciar gravação: ' + (err && err.message ? err.message : err));
+      const constraints = {
+        video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: true
+      };
+
+      showStatus('Abrindo câmera...');
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+      video.srcObject = stream;
+      video.muted = true;
+      video.setAttribute('playsinline','');
+      await video.play();
+
+      // ensure overlay loaded
+      try { await waitForImage(overlayImg); } catch(e){ console.warn('overlay load failed', e); }
+
+      // set canvas logical resolution to 1080x1920 (portrait)
+      canvas.width = 1080;
+      canvas.height = 1920;
+
+      // show UI
+      video.style.display = 'block';
+      canvas.style.display = 'block';
+      controls.style.display = 'flex';
+      enableBtn.style.display = 'none';
+      showStatus('', false);
+
+      // start rendering
+      startRenderLoop();
+    } catch (err) {
+      console.error('startCamera error', err);
+      alert('Erro ao abrir câmera: ' + (err && err.message ? err.message : err));
+      showStatus('Erro: '+ (err && err.name ? err.name : 'unknown'), true);
+    }
   }
-});
 
-stopBtn.addEventListener('click', () => {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-    showStatus('Parando gravação...');
+  function startRenderLoop(){
+    if (drawRAF) return;
+
+    function loop(){
+      const W = canvas.width;   // 1080
+      const H = canvas.height;  // 1920
+
+      // clear
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0,0,W,H);
+
+      const vw = video.videoWidth || W;
+      const vh = video.videoHeight || H;
+
+      // If video metadata not ready, skip draw
+      if (!vw || !vh) {
+        drawRAF = requestAnimationFrame(loop);
+        return;
+      }
+
+      // scale to fill HEIGHT (portrait) - keeps aspect ratio
+      const scale = H / vh;
+      const drawW = vw * scale;
+      const drawH = H;
+      const dx = (W - drawW) / 2;
+
+      // draw video (mirror only the video drawing when using front camera)
+      if (usingFront) {
+        ctx.save();
+        // translate to right edge of video region and flip horizontally
+        ctx.translate(dx + drawW, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, 0, 0, vw, vh, 0, 0, drawW, drawH);
+        ctx.restore();
+      } else {
+        ctx.drawImage(video, 0, 0, vw, vh, dx, 0, drawW, drawH);
+      }
+
+      // draw overlay scaled by height and centered horizontally
+      if (overlayImg && overlayImg.naturalWidth) {
+        const ow = overlayImg.naturalWidth;
+        const oh = overlayImg.naturalHeight;
+        const oScale = H / oh;
+        const oW = ow * oScale;
+        const odx = (W - oW) / 2;
+        ctx.drawImage(overlayImg, 0, 0, ow, oh, odx, 0, oW, H);
+      }
+
+      drawRAF = requestAnimationFrame(loop);
+    }
+
+    loop();
   }
-});
 
-/* Convert WEBM -> MP4 using ffmpeg.wasm */
-async function convertWebmToMp4(webmBlob) {
-  if (!ffmpeg) {
-    showStatus('Carregando ffmpeg (pode demorar)...');
-    ffmpeg = FFmpeg.createFFmpeg({ log: false });
-    await ffmpeg.load();
+  function stopRenderLoop(){
+    if (drawRAF) { cancelAnimationFrame(drawRAF); drawRAF = null; }
   }
 
-  showStatus('Escrevendo arquivo para ffmpeg...');
-  const data = await FFmpeg.fetchFile(webmBlob);
-  ffmpeg.FS('writeFile', 'input.webm', data);
+  /* Photo capture */
+  photoBtn.addEventListener('click', async () => {
+    if (!canvas.width || !canvas.height) { alert('Aguardando vídeo...'); return; }
 
-  showStatus('Convertendo para MP4 (isso pode demorar no celular)...');
-  // re-encode to H.264 + AAC
-  await ffmpeg.run(
-    '-i','input.webm',
-    '-c:v','libx264',
-    '-preset','veryfast',
-    '-crf','23',
-    '-c:a','aac',
-    '-b:a','128k',
-    '-movflags','faststart',
-    'output.mp4'
-  );
+    // create a copy of the canvas at full logical resolution (1080x1920)
+    const tmp = document.createElement('canvas');
+    tmp.width = canvas.width;
+    tmp.height = canvas.height;
+    const tctx = tmp.getContext('2d');
+    tctx.drawImage(canvas, 0, 0);
 
-  showStatus('Lendo MP4...');
-  const mp4Data = ffmpeg.FS('readFile','output.mp4');
-  const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
+    const dataUrl = tmp.toDataURL('image/png');
 
-  try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
+    previewVideo.style.display = 'none';
+    previewPhoto.style.display = 'block';
+    previewPhoto.src = dataUrl;
+    preview.style.display = 'flex';
+    showStatus('Foto pronta', true);
+  });
 
-  return mp4Blob;
-}
+  /* Recording */
+  recordBtn.addEventListener('click', async () => {
+    if (!stream) { alert('Abra a câmera primeiro.'); return; }
+    if (!drawRAF) startRenderLoop();
 
-/* Save preview (photo or video) */
-saveBtn.addEventListener('click', () => {
-  if (previewVideo.style.display !== 'none' && previewVideo.src) {
-    const a = document.createElement('a');
-    a.href = previewVideo.src;
-    a.download = 'video.mp4';
-    a.click();
-    showStatus('Download iniciado', true);
-  } else if (previewPhoto.style.display !== 'none' && previewPhoto.src) {
-    const a = document.createElement('a');
-    a.href = previewPhoto.src;
-    a.download = 'foto.png';
-    a.click();
-    showStatus('Download iniciado', true);
-  } else {
-    alert('Nada para salvar.');
+    const canvasStream = canvas.captureStream(30);
+
+    // attach audio
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks && audioTracks.length) {
+      canvasStream.addTrack(audioTracks[0]);
+    }
+
+    // choose mime
+    let mime = '';
+    const cands = [
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9,opus',
+      'video/webm'
+    ];
+    for (const c of cands) {
+      try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) { mime = c; break; } } catch(e){}
+    }
+
+    try {
+      recordedChunks = [];
+      mediaRecorder = new MediaRecorder(canvasStream, mime ? { mimeType: mime } : undefined);
+
+      mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+
+      mediaRecorder.onstart = () => {
+        showStatus('Gravando...');
+        recordBtn.style.display = 'none';
+        stopBtn.style.display = 'inline-block';
+      };
+
+      mediaRecorder.onstop = async () => {
+        showStatus('Finalizando gravação...');
+        const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+
+        try {
+          const mp4Blob = await convertWebmToMp4(webmBlob);
+          const url = URL.createObjectURL(mp4Blob);
+          previewVideo.src = url;
+          previewVideo.style.display = 'block';
+          previewPhoto.style.display = 'none';
+          preview.style.display = 'flex';
+          showStatus('Vídeo pronto (MP4)', true);
+        } catch (e) {
+          console.error('FFmpeg failed', e);
+          const webmUrl = URL.createObjectURL(webmBlob);
+          previewVideo.src = webmUrl;
+          previewVideo.style.display = 'block';
+          previewPhoto.style.display = 'none';
+          preview.style.display = 'flex';
+          showStatus('Vídeo pronto (WEBM) — conversão falhou', true);
+        } finally {
+          recordBtn.style.display = 'inline-block';
+          stopBtn.style.display = 'none';
+        }
+      };
+
+      mediaRecorder.start();
+    } catch (err) {
+      console.error('mediaRecorder start error', err);
+      alert('Não foi possível iniciar gravação: ' + (err && err.message ? err.message : err));
+    }
+  });
+
+  stopBtn.addEventListener('click', () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      showStatus('Parando gravação...');
+    }
+  });
+
+  /* Convert WEBM -> MP4 */
+  async function convertWebmToMp4(webmBlob) {
+    if (!ffmpeg) {
+      showStatus('Carregando ffmpeg (pode demorar)...');
+      ffmpeg = FFmpeg.createFFmpeg({ log: false });
+      await ffmpeg.load();
+    }
+
+    showStatus('Escrevendo arquivo para ffmpeg...');
+    const data = await FFmpeg.fetchFile(webmBlob);
+    ffmpeg.FS('writeFile', 'input.webm', data);
+
+    showStatus('Convertendo para MP4 (isso pode demorar no celular)...');
+    await ffmpeg.run(
+      '-i','input.webm',
+      '-c:v','libx264',
+      '-preset','veryfast',
+      '-crf','23',
+      '-c:a','aac',
+      '-b:a','128k',
+      '-movflags','faststart',
+      'output.mp4'
+    );
+
+    showStatus('Lendo MP4...');
+    const mp4Data = ffmpeg.FS('readFile','output.mp4');
+    const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
+
+    try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
+
+    return mp4Blob;
   }
-});
 
-/* Retry */
-retryBtn.addEventListener('click', () => {
-  preview.style.display = 'none';
-  previewVideo.pause();
-  previewVideo.src = '';
-  previewPhoto.src = '';
-  showStatus('', false);
-});
+  /* Save (photo or video) */
+  saveBtn.addEventListener('click', () => {
+    if (previewVideo.style.display !== 'none' && previewVideo.src) {
+      const a = document.createElement('a');
+      a.href = previewVideo.src;
+      a.download = 'video.mp4';
+      a.click();
+      showStatus('Download iniciado', true);
+    } else if (previewPhoto.style.display !== 'none' && previewPhoto.src) {
+      const a = document.createElement('a');
+      a.href = previewPhoto.src;
+      a.download = 'foto.png';
+      a.click();
+      showStatus('Download iniciado', true);
+    } else {
+      alert('Nada para salvar.');
+    }
+  });
 
-/* Switch camera */
-switchBtn.addEventListener('click', async () => {
-  usingFront = !usingFront;
-  try {
-    await startCamera();
-  } catch (e) {
-    console.error('Erro trocar câmera', e);
-    alert('Erro ao trocar câmera: ' + (e && e.message ? e.message : e));
-  }
-});
+  retryBtn.addEventListener('click', () => {
+    preview.style.display = 'none';
+    previewVideo.pause();
+    previewVideo.src = '';
+    previewPhoto.src = '';
+    showStatus('', false);
+  });
 
-/* Enable button */
-enableBtn.addEventListener('click', async () => {
-  try { await startCamera(); } catch(e){ console.error(e); }
-});
+  switchBtn.addEventListener('click', async () => {
+    usingFront = !usingFront;
+    try { await startCamera(); } catch (e) { console.error('Erro trocar câmera', e); alert('Erro ao trocar câmera: ' + (e && e.message ? e.message : e)); }
+  });
 
-/* Cleanup on leave */
-window.addEventListener('pagehide', () => {
-  try {
-    if (stream) stream.getTracks().forEach(t=>t.stop());
-    stopRenderLoop();
-  } catch(e){}
-});
+  enableBtn.addEventListener('click', async () => {
+    try { await startCamera(); } catch(e){ console.error(e); }
+  });
 
+  window.addEventListener('pagehide', () => {
+    try {
+      if (stream) stream.getTracks().forEach(t=>t.stop());
+      stopRenderLoop();
+    } catch(e){}
+  });
+
+  // initial UI hide handled in HTML/CSS; ready to use
+})();
 </script>
 </body>
 </html>
