@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Moldura - Foto & Vídeo MP4</title>
+<title>Moldura - Foto & Vídeo MP4 Final</title>
 
-<!-- FFmpeg para conversão MP4 -->
+<!-- FFmpeg para MP4 -->
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
@@ -86,7 +86,7 @@ let recorder = null;
 let chunks = [];
 
 /* =======================================================
-    ABRIR CÂMERA AUTOMÁTICO
+    1) ABRIR CÂMERA AUTOMÁTICO
 ======================================================= */
 async function startCamera() {
   if (stream) stream.getTracks().forEach(t=>t.stop());
@@ -123,7 +123,7 @@ switchBtn.onclick = ()=>{ usingFront = !usingFront; startCamera(); };
 
 
 /* =======================================================
-    FOTO COM MOLDURA — SALVAMENTO AUTOMÁTICO
+    2) FOTO AUTOMÁTICA COM MOLDURA
 ======================================================= */
 photoBtn.onclick = async ()=> {
   const track = stream.getVideoTracks()[0];
@@ -157,9 +157,25 @@ photoBtn.onclick = async ()=> {
 
 
 /* =======================================================
-    GRAVAÇÃO DE VÍDEO MP4 (100% CORRIGIDO)
+    3) VÍDEO MP4 COM MOLDURA — 100% CORRIGIDO
 ======================================================= */
-recordBtn.onclick = async ()=>{
+
+// FFmpeg pré-carregado (garante MP4)
+let ffmpegReady = false;
+const ff = FFmpeg.createFFmpeg({ log:false });
+
+(async ()=>{
+    await ff.load();
+    ffmpegReady = true;
+})();
+
+recordBtn.onclick = async () => {
+
+  if (!ffmpegReady) {
+    msg.innerHTML = "Carregando conversor...";
+    return;
+  }
+
   if (recorder && recorder.state === "recording") {
     recorder.stop();
     return;
@@ -172,36 +188,35 @@ recordBtn.onclick = async ()=>{
   const audioTrack = stream.getAudioTracks()[0];
   if (audioTrack) canvasStream.addTrack(audioTrack);
 
-  const options = { mimeType:"video/webm; codecs=vp8" };
-  recorder = new MediaRecorder(canvasStream, options);
+  recorder = new MediaRecorder(canvasStream, {
+    mimeType:"video/webm; codecs=vp8"
+  });
 
-  recorder.ondataavailable = (e)=>{ if(e.data.size>0) chunks.push(e.data); };
+  recorder.ondataavailable = e => {
+    if (e.data.size > 0) chunks.push(e.data);
+  };
 
-  recorder.onstop = async ()=> {
+  recorder.onstop = async () => {
     msg.innerHTML = "Convertendo MP4...";
 
     const webmBlob = new Blob(chunks, { type:"video/webm" });
 
-    const ff = FFmpeg.createFFmpeg({ log:false });
-
-    await ff.load();
-
-    ff.FS("writeFile", "in.webm", await FFmpeg.fetchFile(webmBlob));
+    ff.FS("writeFile", "video.webm", await FFmpeg.fetchFile(webmBlob));
 
     await ff.run(
-      "-i","in.webm",
+      "-i","video.webm",
       "-c:v","libx264",
-      "-preset","veryfast",
       "-pix_fmt","yuv420p",
+      "-preset","veryfast",
       "-profile:v","baseline",
       "-level","3.0",
       "-movflags","faststart",
       "-c:a","aac",
       "-b:a","128k",
-      "out.mp4"
+      "video.mp4"
     );
 
-    const mp4 = ff.FS("readFile","out.mp4");
+    const mp4 = ff.FS("readFile","video.mp4");
     const mp4Blob = new Blob([mp4.buffer], {type:"video/mp4"});
     const url = URL.createObjectURL(mp4Blob);
 
@@ -211,7 +226,7 @@ recordBtn.onclick = async ()=>{
     a.click();
 
     msg.innerHTML = "Vídeo salvo!";
-    setTimeout(()=> msg.innerHTML="", 1800);
+    setTimeout(()=> msg.innerHTML="", 2000);
   };
 
   recorder.start(100);
@@ -226,7 +241,7 @@ recordBtn.onclick = async ()=>{
 };
 
 
-/* DESENHAR FRAME + MOLDURA NO CANVAS */
+/* DESENHAR FRAME + MOLDURA NO CANVAS PARA FOTO & VÍDEO */
 function drawFrame(){
   const track = stream.getVideoTracks()[0];
   const { width, height } = track.getSettings();
@@ -247,5 +262,6 @@ function drawFrame(){
   ctx.drawImage(overlay,0,0,width,height);
 }
 </script>
+
 </body>
 </html>
