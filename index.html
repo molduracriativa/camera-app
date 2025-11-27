@@ -119,7 +119,7 @@
 <video id="video" autoplay playsinline muted></video>
 <img id="frame" src="assets/moldura.png" alt="Moldura"/>
 
-<canvas id="canvas" width="1080" height="1920" style="display:none"></canvas>
+<canvas id="canvas" width="540" height="960" style="display:none"></canvas>
 
 <div id="controls">
   <button id="switch" class="btn">🔄</button>
@@ -161,7 +161,6 @@ const recordBtn = document.getElementById('record');
 /* FUNÇÕES DE UTILITY                               */
 /* -------------------------------------------------------------------------- */
 
-// Função unificada para salvar foto ou vídeo automaticamente
 async function autoSaveMedia(blob, fileName, fileType) {
     loadingOverlay.style.display = 'flex';
     
@@ -182,6 +181,7 @@ async function autoSaveMedia(blob, fileName, fileType) {
         a.href = url;
         a.download = fileName;
         
+        // Timeout para garantir que o navegador não bloqueie o download
         setTimeout(() => {
             a.click();
             document.body.removeChild(a);
@@ -220,6 +220,7 @@ async function startCamera(){
     }
 
     const constraints = {
+      // Pedir uma resolução que o canvas suporte de forma eficiente
       video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: true
     };
@@ -325,6 +326,7 @@ photoBtn.addEventListener('click', async () => {
 
   drawToCanvas();
 
+  // A resolução da foto será 540x960 (a resolução do canvas)
   const dataUrl = canvas.toDataURL('image/png');
   const blob = await (await fetch(dataUrl)).blob();
   
@@ -381,12 +383,14 @@ async function startRecording(){
   let recordedChunks = [];
   let options = {};
   
-  const mime = 'video/webm;codecs=vp8,opus'; 
+  // MUDANÇA CRÍTICA: Prioriza o MIME Type mais básico ('video/webm')
+  const mime = 'video/webm'; 
   try { 
       if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
           options.mimeType = mime; 
       } else {
-          options.mimeType = 'video/webm';
+          // Último recurso: tenta qualquer coisa que o navegador suporte
+          options.mimeType = MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm';
       }
   } catch(e){}
 
@@ -428,11 +432,11 @@ async function startRecording(){
   startTimer();
   recordBtn.classList.add('recording');
 
-  // Desenho agressivo para garantir que o Canvas Stream capture quadros
+  // Desenho agressivo (30 FPS)
   if (drawInterval) clearInterval(drawInterval);
   drawInterval = setInterval(() => {
     drawToCanvas();
-  }, 33); // Aproximadamente 30 FPS
+  }, 33); 
 }
 
 function stopRecording(){
@@ -469,7 +473,6 @@ function stopTimer(){
     if (!videoReady) {
       await startCamera();
     }
-    // Verifica se a gravação já está em andamento (para evitar iniciar 2 vezes)
     if (recorder && recorder.state !== 'inactive') return; 
     await startRecording();
   };
