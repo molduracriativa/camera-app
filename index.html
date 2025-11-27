@@ -81,50 +81,34 @@
     display:none; font-weight:600;
     z-index:20;
   }
-
-  /* Prévia */
-  #preview {
-    position:fixed; inset:0;
-    background:#000;
-    z-index:30;
-    display:none;
-    justify-content:center;
-    align-items:center;
-  }
-
-  #preview video,
-  #preview img {
-    max-width:100%;
-    max-height:100%;
-    object-fit:contain;
-    pointer-events:auto;
-  }
-
-  /* Botões Salvar / Refazer (VERTICAL) */
-  #preview-buttons {
-    position:fixed; bottom:30px; left:0; right:0;
-    display:none;
-    flex-direction:column;
-    align-items:center;
-    gap:20px;
-    z-index:40;
-    pointer-events:auto;
-  }
-
-  .pbtn {
-    padding:16px 28px;
-    background:#fff;
-    border:none;
-    border-radius:12px;
-    font-size:20px;
-    color:#000;
-    width:60%;
-    text-align:center;
+  
+  /* Loading Overlay (para feedback de processamento) */
+  #loading-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      display: none; /* Inicia oculto */
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      font-size: 24px;
+      z-index: 50;
   }
   
-  .pbtn:disabled {
-      opacity: 0.7;
-      cursor: not-allowed;
+  #loading-overlay:after {
+      content: '';
+      width: 40px;
+      height: 40px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-top: 15px;
+  }
+  
+  @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
   }
 </style>
 </head>
@@ -145,15 +129,8 @@
 
 <div id="timer">0.0s</div>
 
-<div id="preview">
-  <video id="previewVideo" controls playsinline style="display:none"></video>
-  <img id="previewPhoto" style="display:none" alt="Prévia da foto"/>
-</div>
+<div id="loading-overlay">Processando e Salvando...</div>
 
-<div id="preview-buttons">
-  <button id="save" class="pbtn">Salvar</button>
-  <button id="retry" class="pbtn">Refazer</button>
-</div>
 
 <script>
 let stream=null;
@@ -163,32 +140,66 @@ let chunks=[];
 let elapsed=0;
 let timerInt=null;
 let videoReady=false;
-let drawInterval = null; // Novo intervalo para forçar o desenho
+let drawInterval = null; 
 
 const video=document.getElementById("video");
 const frame=document.getElementById("frame");
 const canvas=document.getElementById("canvas");
 const ctx=canvas.getContext("2d");
 
-const preview=document.getElementById("preview");
-const previewVideo=document.getElementById("previewVideo");
-const previewPhoto=document.getElementById("previewPhoto");
-const previewButtons=document.getElementById("preview-buttons");
 const timerEl=document.getElementById("timer");
-
 const enable=document.getElementById("enable");
 const controls=document.getElementById("controls");
-
-const saveBtn=document.getElementById("save");
-const retryBtn=document.getElementById("retry");
+const loadingOverlay = document.getElementById("loading-overlay");
 
 const switchBtn = document.getElementById('switch');
 const photoBtn = document.getElementById('photo');
 const recordBtn = document.getElementById('record');
 
+
 /* -------------------------------------------------------------------------- */
-/* FUNÇÕES BASE                               */
+/* FUNÇÕES DE UTILITY                               */
 /* -------------------------------------------------------------------------- */
+
+// Função unificada para salvar foto ou vídeo automaticamente
+async function autoSaveMedia(blob, fileName, fileType) {
+    loadingOverlay.style.display = 'flex';
+    
+    try {
+        const file = new File([blob], fileName, { type: fileType });
+
+        // Tenta 1: Web Share Files (Melhor para salvar na galeria/compartilhar)
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            console.log('Tentando Web Share...');
+            await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
+            loadingOverlay.style.display = 'none';
+            return; 
+        }
+
+        // Tenta 2: Download Direto (O mais robusto)
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        
+        // Usa setTimeout para garantir que o navegador não bloqueie o download
+        // por não estar imediatamente associado a um clique do usuário.
+        setTimeout(() => {
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url); 
+            loadingOverlay.style.display = 'none';
+            alert(`Download de ${fileName} iniciado!`);
+        }, 100);
+        
+        document.body.appendChild(a);
+
+    } catch (e) {
+        loadingOverlay.style.display = 'none';
+        console.error('Falha no salvamento automático. Verifique permissões.', e);
+        alert(`Falha ao salvar o arquivo automaticamente. Verifique as permissões de download do seu navegador. Tente usar Chrome ou Firefox.`);
+    }
+}
 
 async function showFrameWhenReady() {
   try {
@@ -211,8 +222,10 @@ async function startCamera(){
     }
 
     const constraints = {
+      // Para o erro "Could not start audio source", o ideal é tentar SÓ a câmera
+      // e depois adicionar o áudio. Mas o padrão é tentar ambos. Vamos manter o padrão.
       video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: true
+      audio: true // Tentar áudio, mas se falhar (o erro anterior), o vídeo deve funcionar
     };
 
     stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -243,8 +256,13 @@ async function startCamera(){
     controls.style.display = 'flex';
 
     showFrameWhenReady();
-
     drawToCanvas();
+    
+    // Se o áudio falhar (erro anterior), o stream ainda deve conter o vídeo
+    if (stream.getAudioTracks().length === 0) {
+        console.warn("Aviso: Falha ao iniciar a fonte de áudio. A gravação do vídeo será silenciosa.");
+    }
+    
   } catch (err) {
     console.error('startCamera error', err);
     alert('Erro ao acessar câmera: ' + (err && err.message ? err.message : err));
@@ -288,7 +306,7 @@ let drawLoopId = null;
 function drawLoop(){
   if (drawLoopId) return;
   function loop(){
-    if (videoReady && !drawInterval) drawToCanvas(); // Só desenha via RAF se não estiver gravando
+    if (videoReady && !drawInterval) drawToCanvas(); 
     drawLoopId = requestAnimationFrame(loop);
   }
   loop();
@@ -301,7 +319,7 @@ function stopDrawLoop(){
 }
 
 /* -------------------------------------------------------------------------- */
-/* FOTO (IMAGEM)                             */
+/* FOTO (IMAGEM) - AGORA AUTOMÁTICA                             */
 /* -------------------------------------------------------------------------- */
 
 photoBtn.addEventListener('click', async () => {
@@ -310,57 +328,21 @@ photoBtn.addEventListener('click', async () => {
     return;
   }
 
+  // 1. Tira a foto (Desenha a última moldura no canvas)
   drawToCanvas();
 
+  // 2. Converte para Blob
   const dataUrl = canvas.toDataURL('image/png');
   const blob = await (await fetch(dataUrl)).blob();
-  const file = new File([blob], "foto.png", { type: blob.type });
-
-  preview.style.display = 'flex';
-  previewPhoto.style.display = 'block';
-  previewVideo.style.display = 'none';
-  previewPhoto.src = dataUrl;
-  previewButtons.style.display = 'flex';
   
-  saveBtn.textContent = 'Salvar'; 
-  saveBtn.disabled = false;
-  retryBtn.disabled = false;
+  // 3. Salva automaticamente
+  await autoSaveMedia(blob, "foto.png", blob.type);
 
-  // ** Lógica Salvar Foto **
-  saveBtn.onclick = async () => {
-    try {
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: "Foto Capturada" });
-      } 
-      else {
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = 'foto.png';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      }
-    } catch (e) {
-      console.warn('Share/save failed, fallback to download', e);
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = 'foto.png';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
-  };
-  
-  // ** Lógica Refazer Foto **
-  retryBtn.onclick = () => {
-    preview.style.display = 'none';
-    previewButtons.style.display = 'none';
-    previewPhoto.src = '';
-  };
+  // 4. Retorna à câmera (Não precisa de Refazer)
 });
 
 /* -------------------------------------------------------------------------- */
-/* VÍDEO (GRAVAÇÃO)                             */
+/* VÍDEO (GRAVAÇÃO) - AGORA AUTOMÁTICA                             */
 /* -------------------------------------------------------------------------- */
 
 async function startRecording(){
@@ -377,10 +359,8 @@ async function startRecording(){
     if (!started) return;
   }
 
-  // Desenha uma vez para garantir que o canvas esteja atualizado antes de capturar
   drawToCanvas();
 
-  // Captura o stream do canvas (vídeo) e o stream da câmera (áudio)
   const canvasStream = canvas.captureStream(30);
   const audioTracks = stream ? stream.getAudioTracks() : [];
   
@@ -388,18 +368,14 @@ async function startRecording(){
   if (audioTracks && audioTracks.length) {
     try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
   }
-  
-  // LOG CRÍTICO para verificação
-  console.log('Canvas Stream Tracks:', canvasStream.getTracks());
+
   if (canvasStream.getVideoTracks().length === 0) {
-      alert("Aviso: Nenhuma trilha de vídeo foi detectada no Canvas Stream. A gravação do vídeo falhará.");
-      // Continua, pois o áudio pode ter sido adicionado
+      alert("Aviso: Nenhuma trilha de vídeo foi detectada no Canvas Stream. A gravação do vídeo pode falhar.");
   }
 
   let recordedChunks = [];
   let options = {};
   
-  // Tenta o codec mais comum para WEBM
   const mime = 'video/webm;codecs=vp8,opus'; 
   try { 
       if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
@@ -413,7 +389,7 @@ async function startRecording(){
     recorder = new MediaRecorder(canvasStream, options);
   } catch (e) {
     console.error("Erro ao inicializar MediaRecorder:", e);
-    alert("Erro crítico: O navegador não suporta a gravação de vídeo do canvas.");
+    alert("Erro crítico: O navegador não suporta a gravação de vídeo.");
     return;
   }
 
@@ -430,74 +406,19 @@ async function startRecording(){
 
     if (recordedChunks.length === 0) {
         alert('Erro: Nenhuma gravação capturada. Tente gravar por mais tempo.');
-        preview.style.display = 'none';
-        previewButtons.style.display = 'none';
         return;
     }
 
     const finalBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     
-    // ** Validação Crucial de Blob **
-    if (finalBlob.size < 1024) { // Tamanho menor que 1KB indica provável falha (só metadados ou só áudio minúsculo)
-        alert('Aviso: O arquivo gravado é muito pequeno. O vídeo pode estar vazio. Tente usar outro navegador (Chrome ou Firefox).');
-        // Continua para tentar salvar mesmo assim
+    if (finalBlob.size < 1024) { 
+        console.warn('Aviso: O arquivo gravado é muito pequeno. O vídeo pode estar vazio.');
     }
-
-    const finalUrl = URL.createObjectURL(finalBlob); 
-    const finalFileName = 'video_capturado.webm';
-    const finalFileType = 'video/webm';
-
-    // Configura a prévia e botões
-    preview.style.display = 'flex';
-    previewButtons.style.display = 'flex';
-    previewPhoto.style.display = 'none';
-    previewVideo.style.display = 'block';
-    previewVideo.src = finalUrl;
-    previewVideo.load();
-    saveBtn.textContent = 'Salvar Vídeo (WEBM)';
-    saveBtn.disabled = false;
-    retryBtn.disabled = false;
-    console.log('Prévia do vídeo WEBM configurada. Botões ativos.');
-
-    // ** Lógica Salvar Vídeo (Download Rápido) **
-    saveBtn.onclick = async () => {
-        try {
-          const file = new File([finalBlob], finalFileName, { type: finalFileType });
-          
-          // 1. Tenta Web Share Files (salvar na galeria/compartilhar)
-          if (navigator.canShare && navigator.canShare({ files: [file] })) {
-            await navigator.share({ files: [file], title: 'Vídeo Capturado' });
-          } 
-          // 2. Fallback para Download Direto (Mais confiável)
-          else {
-            const a = document.createElement('a');
-            a.href = finalUrl;
-            a.download = finalFileName;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          }
-        } catch (e) {
-          console.error('Falha ao tentar salvar/compartilhar o vídeo.', e);
-          // Força o download como último recurso
-          const a = document.createElement('a');
-          a.href = finalUrl;
-          a.download = finalFileName;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        }
-    };
-
-    // ** Lógica Refazer Vídeo **
-    retryBtn.onclick = () => {
-        preview.style.display = 'none';
-        previewButtons.style.display = 'none';
-        previewVideo.pause();
-        previewVideo.src = '';
-        URL.revokeObjectURL(finalUrl); // Limpa o Blob URL
-        console.log('Refazer vídeo executado. URL revogada.');
-    };
+    
+    // Salva automaticamente
+    await autoSaveMedia(finalBlob, 'video_capturado.webm', finalBlob.type);
+    
+    // Não precisa de refazer ou preview, volta para a câmera.
   };
 
   recorder.start();
@@ -540,30 +461,34 @@ function stopTimer(){
 (function bindPressHold(){
   recordBtn.addEventListener('contextmenu', e => e.preventDefault());
 
-  recordBtn.addEventListener('pointerdown', async (e) => {
+  const handleStartRecording = async (e) => {
     e.preventDefault();
     if (!videoReady) {
       await startCamera();
     }
     await startRecording();
-  });
-
-  const stopEvents = (e) => {
+  };
+  
+  const handleStopRecording = (e) => {
     e.preventDefault();
     stopRecording();
   };
-  recordBtn.addEventListener('pointerup', stopEvents);
-  recordBtn.addEventListener('pointercancel', stopEvents);
 
-  recordBtn.addEventListener('touchstart', async (e) => { e.preventDefault(); if (!videoReady) await startCamera(); await startRecording(); }, {passive:false});
-  recordBtn.addEventListener('touchend', stopEvents, {passive:false});
-  recordBtn.addEventListener('touchcancel', stopEvents, {passive:false});
+  // Botão de gravação - Lógica de Pressionar e Soltar (ou Click)
+  recordBtn.addEventListener('pointerdown', handleStartRecording);
+  recordBtn.addEventListener('pointerup', handleStopRecording);
+  recordBtn.addEventListener('pointercancel', handleStopRecording);
+
+  recordBtn.addEventListener('touchstart', handleStartRecording, {passive:false});
+  recordBtn.addEventListener('touchend', handleStopRecording, {passive:false});
+  recordBtn.addEventListener('touchcancel', handleStopRecording, {passive:false});
 
   recordBtn.addEventListener('click', async (e) => {
     e.preventDefault();
     if (!recorder) {
       if (!videoReady) await startCamera();
       await startRecording();
+      // Auto-stop após 3s para clicks rápidos
       setTimeout(()=> stopRecording(), 3000);
     } else {
       stopRecording();
@@ -576,10 +501,6 @@ enable.addEventListener('click', startCamera);
 switchBtn.addEventListener('click', async () => {
     usingFront = !usingFront;
     await startCamera();
-});
-
-previewButtons.addEventListener('click', (e) => {
-  e.stopPropagation();
 });
 
 /* ---------- Inicialização ---------- */
