@@ -16,7 +16,7 @@
     overflow:hidden;
   }
 
-  /* ------------------ layout ------------------ */
+  /* initial button (on top) */
   #enable-btn{
     position:fixed; left:50%; top:50%;
     transform:translate(-50%,-50%);
@@ -27,7 +27,7 @@
     touch-action:manipulation;
   }
 
-  /* video (hidden until start) - behind canvas */
+  /* raw video (hidden) */
   #video {
     display:none;
     position:fixed; inset:0;
@@ -37,26 +37,22 @@
     pointer-events:none;
   }
 
-  /* canvas is the main rendered output; will be 1080x1920 and scaled to fit screen */
+  /* canvas (logical 1080x1920). scaled to fit viewport */
   #render-canvas {
     display:none;
     position:fixed; left:50%; top:50%;
     transform:translate(-50%,-50%);
     width:100vw; height:100vh;
-    max-width:100vh; /* keep responsive */
     z-index:2;
     background:#000;
     touch-action:none;
-    pointer-events:none; /* ensure buttons above receive touches */
-  }
-
-  /* overlay image kept for loading; hidden but pointer-events none */
-  #overlay {
-    display:none;
     pointer-events:none;
   }
 
-  /* controls on top */
+  /* overlay image loader (hidden) */
+  #overlay { display:none; pointer-events:none; }
+
+  /* controls */
   #controls {
     display:none;
     position:fixed;
@@ -76,7 +72,7 @@
   }
   .btn.red{ background:#e53935; color:#fff; }
 
-  /* preview area */
+  /* preview */
   #preview {
     display:none;
     position:fixed;
@@ -93,34 +89,31 @@
   }
   .action-save { background:#4CAF50; color:#fff; padding:10px 18px; border-radius:8px; border:none; font-size:16px; cursor:pointer; width:180px; }
 
-  /* status text */
+  /* status */
   #status { position:fixed; top:12px; left:12px; background:rgba(0,0,0,0.5); padding:8px 10px; border-radius:10px; z-index:100010; font-size:13px; display:none; pointer-events:none; color:#fff; }
 
-  /* ensure interactive elements receive pointer */
+  /* ensure controls clickable */
   #controls, #controls * { pointer-events:auto !important; }
   #preview, #preview * { pointer-events:auto !important; }
 
-  /* responsive hint: maintain aspect ratio style */
-  @media (orientation:landscape){
-    /* on landscape we still scale canvas to height */
+  /* patch to avoid selection/popup on iOS/Android */
+  html, body {
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    -webkit-touch-callout: none !important;
+    touch-action: manipulation !important;
   }
 </style>
 </head>
 <body>
 
-<!-- Initial interaction required on mobile -->
 <button id="enable-btn">Ativar Câmera</button>
 
-<!-- raw video (hidden) -->
 <video id="video" autoplay playsinline muted></video>
-
-<!-- overlay image (transparent PNG) - keep in same folder -->
 <img id="overlay" src="moldura.png" alt="moldura" />
 
-<!-- canvas — will be set to 1080 x 1920 logical pixels and scaled to screen -->
 <canvas id="render-canvas" width="1080" height="1920"></canvas>
 
-<!-- controls -->
 <div id="controls">
   <button id="switch-btn" class="btn" title="Trocar câmera">🔄</button>
   <button id="photo-btn" class="btn" title="Tirar foto">📸</button>
@@ -128,7 +121,6 @@
   <button id="stop-btn" class="btn red" title="Parar" style="display:none">⏹️</button>
 </div>
 
-<!-- preview area -->
 <div id="preview">
   <video id="preview-video" controls playsinline style="display:none"></video>
   <img id="preview-photo" style="display:none"/>
@@ -139,4 +131,340 @@
 <div id="status"></div>
 
 <!-- FFmpeg WASM -->
-<script src="https:/
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
+
+<script>
+/* Elements */
+const enableBtn = document.getElementById('enable-btn');
+const video = document.getElementById('video');
+const overlayImg = document.getElementById('overlay');
+const canvas = document.getElementById('render-canvas');
+const ctx = canvas.getContext('2d');
+
+const controls = document.getElementById('controls');
+const switchBtn = document.getElementById('switch-btn');
+const photoBtn = document.getElementById('photo-btn');
+const recordBtn = document.getElementById('record-btn');
+const stopBtn = document.getElementById('stop-btn');
+
+const preview = document.getElementById('preview');
+const previewVideo = document.getElementById('preview-video');
+const previewPhoto = document.getElementById('preview-photo');
+const saveBtn = document.getElementById('save-btn');
+const retryBtn = document.getElementById('retry-btn');
+
+const statusEl = document.getElementById('status');
+
+/* State */
+let stream = null;
+let usingFront = true;
+let drawRAF = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let ffmpeg = null;
+
+/* Utilities */
+function showStatus(msg, show=true){
+  if(show){ statusEl.style.display='block'; statusEl.textContent = msg; }
+  else statusEl.style.display='none';
+}
+document.addEventListener('touchstart', ()=>{}, {passive:true});
+document.addEventListener('click', ()=>{}, true);
+
+/* Wait for image load */
+function waitForImage(img){
+  return new Promise((res,rej)=>{
+    if(img.complete && img.naturalWidth) return res();
+    img.onload = ()=> res();
+    img.onerror = (e)=> rej(e);
+  });
+}
+
+/* Start camera */
+async function startCamera(){
+  try {
+    if (stream) {
+      stream.getTracks().forEach(t=>t.stop());
+      stream = null;
+    }
+
+    const constraints = {
+      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: true
+    };
+
+    showStatus('Abrindo câmera...');
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+    video.srcObject = stream;
+    video.muted = true;
+    video.setAttribute('playsinline','');
+    await video.play();
+
+    // ensure overlay loaded
+    try { await waitForImage(overlayImg); } catch(e){ console.warn('overlay load failed', e); }
+
+    // set canvas logical resolution to 1080 x 1920
+    canvas.width = 1080;
+    canvas.height = 1920;
+
+    // show UI
+    video.style.display = 'block';
+    canvas.style.display = 'block';
+    controls.style.display = 'flex';
+    enableBtn.style.display = 'none';
+    showStatus('', false);
+
+    // start rendering frames to canvas
+    startRenderLoop();
+  } catch (err) {
+    console.error('startCamera error', err);
+    alert('Erro ao abrir câmera: ' + (err && err.message ? err.message : err));
+    showStatus('Erro: '+ (err && err.name ? err.name : 'unknown'), true);
+  }
+}
+
+/* Render loop: draw video scaled by height and overlay */
+function startRenderLoop(){
+  if (drawRAF) return;
+
+  function loop(){
+    const W = canvas.width;   // 1080
+    const H = canvas.height;  // 1920
+
+    // clear
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,W,H);
+
+    const vw = video.videoWidth || W;
+    const vh = video.videoHeight || H;
+
+    // scale to fill HEIGHT
+    const scale = H / vh;
+    const drawW = vw * scale;
+    const drawH = H;
+    const dx = (W - drawW) / 2;
+
+    // draw video (mirror only video area if front)
+    if (usingFront) {
+      ctx.save();
+      // translate to left of video region's right edge, flip, draw
+      ctx.translate(dx + drawW, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, vw, vh, 0, 0, drawW, drawH);
+      ctx.restore();
+    } else {
+      ctx.drawImage(video, 0, 0, vw, vh, dx, 0, drawW, drawH);
+    }
+
+    // draw overlay scaled by HEIGHT and centered
+    if (overlayImg && overlayImg.naturalWidth) {
+      const ow = overlayImg.naturalWidth;
+      const oh = overlayImg.naturalHeight;
+      const oScale = H / oh;
+      const oW = ow * oScale;
+      const odx = (W - oW) / 2;
+      ctx.drawImage(overlayImg, 0, 0, ow, oh, odx, 0, oW, H);
+    }
+
+    drawRAF = requestAnimationFrame(loop);
+  }
+
+  loop();
+}
+
+function stopRenderLoop(){
+  if (drawRAF) { cancelAnimationFrame(drawRAF); drawRAF = null; }
+}
+
+/* Photo capture */
+photoBtn.addEventListener('click', async () => {
+  // Ensure canvas has drawn frame
+  if (!canvas.width || !canvas.height) { alert('Aguardando vídeo...'); return; }
+
+  // create copy at full logical res 1080x1920
+  const tmp = document.createElement('canvas');
+  tmp.width = canvas.width;
+  tmp.height = canvas.height;
+  const tctx = tmp.getContext('2d');
+  tctx.drawImage(canvas, 0, 0);
+
+  // data url
+  const dataUrl = tmp.toDataURL('image/png');
+
+  // preview
+  previewVideo.style.display = 'none';
+  previewPhoto.style.display = 'block';
+  previewPhoto.src = dataUrl;
+  preview.style.display = 'flex';
+  showStatus('Foto pronta', true);
+});
+
+/* Recording: capture canvas stream + audio */
+recordBtn.addEventListener('click', async () => {
+  if (!stream) { alert('Abra a câmera primeiro.'); return; }
+
+  if (!drawRAF) startRenderLoop();
+
+  const canvasStream = canvas.captureStream(30);
+
+  // attach audio track
+  const audioTracks = stream.getAudioTracks();
+  if (audioTracks && audioTracks.length) {
+    canvasStream.addTrack(audioTracks[0]);
+  }
+
+  // choose mime
+  let mime = '';
+  const cands = [
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9,opus',
+    'video/webm'
+  ];
+  for (const c of cands) {
+    try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) { mime = c; break; } } catch(e){}
+  }
+
+  try {
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(canvasStream, mime ? { mimeType: mime } : undefined);
+
+    mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+
+    mediaRecorder.onstart = () => {
+      showStatus('Gravando...');
+      recordBtn.style.display = 'none';
+      stopBtn.style.display = 'inline-block';
+    };
+
+    mediaRecorder.onstop = async () => {
+      showStatus('Finalizando gravação...');
+      const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+
+      // convert to MP4 via ffmpeg.wasm
+      try {
+        const mp4Blob = await convertWebmToMp4(webmBlob);
+        const url = URL.createObjectURL(mp4Blob);
+        previewVideo.src = url;
+        previewVideo.style.display = 'block';
+        previewPhoto.style.display = 'none';
+        preview.style.display = 'flex';
+        showStatus('Vídeo pronto (MP4)', true);
+      } catch (e) {
+        console.error('FFmpeg failed', e);
+        // fallback: show webm
+        const webmUrl = URL.createObjectURL(webmBlob);
+        previewVideo.src = webmUrl;
+        previewVideo.style.display = 'block';
+        previewPhoto.style.display = 'none';
+        preview.style.display = 'flex';
+        showStatus('Vídeo pronto (WEBM) — conversão falhou', true);
+      } finally {
+        recordBtn.style.display = 'inline-block';
+        stopBtn.style.display = 'none';
+      }
+    };
+
+    mediaRecorder.start();
+  } catch (err) {
+    console.error('mediaRecorder start error', err);
+    alert('Não foi possível iniciar gravação: ' + (err && err.message ? err.message : err));
+  }
+});
+
+stopBtn.addEventListener('click', () => {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+    showStatus('Parando gravação...');
+  }
+});
+
+/* Convert WEBM -> MP4 using ffmpeg.wasm */
+async function convertWebmToMp4(webmBlob) {
+  if (!ffmpeg) {
+    showStatus('Carregando ffmpeg (pode demorar)...');
+    ffmpeg = FFmpeg.createFFmpeg({ log: false });
+    await ffmpeg.load();
+  }
+
+  showStatus('Escrevendo arquivo para ffmpeg...');
+  const data = await FFmpeg.fetchFile(webmBlob);
+  ffmpeg.FS('writeFile', 'input.webm', data);
+
+  showStatus('Convertendo para MP4 (isso pode demorar no celular)...');
+  // re-encode to H.264 + AAC
+  await ffmpeg.run(
+    '-i','input.webm',
+    '-c:v','libx264',
+    '-preset','veryfast',
+    '-crf','23',
+    '-c:a','aac',
+    '-b:a','128k',
+    '-movflags','faststart',
+    'output.mp4'
+  );
+
+  showStatus('Lendo MP4...');
+  const mp4Data = ffmpeg.FS('readFile','output.mp4');
+  const mp4Blob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
+
+  try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
+
+  return mp4Blob;
+}
+
+/* Save preview (photo or video) */
+saveBtn.addEventListener('click', () => {
+  if (previewVideo.style.display !== 'none' && previewVideo.src) {
+    const a = document.createElement('a');
+    a.href = previewVideo.src;
+    a.download = 'video.mp4';
+    a.click();
+    showStatus('Download iniciado', true);
+  } else if (previewPhoto.style.display !== 'none' && previewPhoto.src) {
+    const a = document.createElement('a');
+    a.href = previewPhoto.src;
+    a.download = 'foto.png';
+    a.click();
+    showStatus('Download iniciado', true);
+  } else {
+    alert('Nada para salvar.');
+  }
+});
+
+/* Retry */
+retryBtn.addEventListener('click', () => {
+  preview.style.display = 'none';
+  previewVideo.pause();
+  previewVideo.src = '';
+  previewPhoto.src = '';
+  showStatus('', false);
+});
+
+/* Switch camera */
+switchBtn.addEventListener('click', async () => {
+  usingFront = !usingFront;
+  try {
+    await startCamera();
+  } catch (e) {
+    console.error('Erro trocar câmera', e);
+    alert('Erro ao trocar câmera: ' + (e && e.message ? e.message : e));
+  }
+});
+
+/* Enable button */
+enableBtn.addEventListener('click', async () => {
+  try { await startCamera(); } catch(e){ console.error(e); }
+});
+
+/* Cleanup on leave */
+window.addEventListener('pagehide', () => {
+  try {
+    if (stream) stream.getTracks().forEach(t=>t.stop());
+    stopRenderLoop();
+  } catch(e){}
+});
+
+</script>
+</body>
+</html>
