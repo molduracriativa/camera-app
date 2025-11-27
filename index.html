@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
+  /* [ESTILOS OMITIDOS PARA BREVIDADE, MANTENHA O CONTEÚDO STYLE COMPLETO] */
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
     width:100%; height:100%;
@@ -224,8 +225,9 @@ const previewButtons=document.getElementById("preview-buttons");
 const saveBtn=document.getElementById("save");
 const retryBtn=document.getElementById("retry");
 
-// URL base para os arquivos WASM do FFmpeg
-const CORE_BASE_URL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.5/dist";
+// SOLUÇÃO: MUDANÇA DE CDN
+// Esta URL usa unpkg.com, um CDN diferente do anterior (jsdelivr.net)
+const CORE_BASE_URL = "https://unpkg.com/@ffmpeg/core@0.12.5/dist"; 
 
 
 /* -------------------------------------------------------------------------- */
@@ -236,14 +238,13 @@ const CORE_BASE_URL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.5/dist";
 async function ensureFFmpegLoaded(){
   if (ffmpeg || ffmpegLoading) return true;
   ffmpegLoading = true;
-  // Apenas mostra o carregamento se a câmera já tiver carregado ou se demorar
   if(videoReady) loadingOverlay.style.display = 'flex';
   loadingOverlay.textContent = 'Carregando recursos de conversão...';
   
   try {
     ffmpeg = FFmpeg.createFFmpeg({ 
         log: false,
-        corePath: `${CORE_BASE_URL}/ffmpeg-core.js`, // SOLUÇÃO: Define explicitamente o caminho do core
+        corePath: `${CORE_BASE_URL}/ffmpeg-core.js`, // Caminho explícito para o novo CDN
         progress: ({ ratio }) => {
             if (ratio < 0 || ratio > 1) return;
             loadingOverlay.textContent = `Convertendo: ${Math.round(ratio * 100)}%`;
@@ -254,11 +255,10 @@ async function ensureFFmpegLoaded(){
   } catch (e) {
     console.error('FFmpeg load failed', e);
     ffmpeg = null;
-    alert('❌ FALHA AO CARREGAR CONVERSOR MP4. Verifique a conexão com a internet.');
+    alert('❌ FALHA AO CARREGAR CONVERSOR MP4. Por favor, verifique a conexão com a internet e tente novamente.');
     return false;
   } finally {
     ffmpegLoading = false;
-    // Esconde o overlay após o carregamento, se a câmera já estiver pronta.
     if (videoReady) loadingOverlay.style.display = 'none';
   }
 }
@@ -391,4 +391,292 @@ async function startCamera(){
     } else if (err.message) {
         errorMessage = err.message;
     }
-    alert
+    alert(`❌ FALHA CRÍTICA AO ACESSAR A CÂMERA: ${errorMessage}`);
+  }
+}
+
+function drawToCanvas() {
+    if (!videoReady) return;
+
+    const vW = video.videoWidth;
+    const vH = video.videoHeight;
+    const cW = canvas.width;
+    const cH = canvas.height;
+    const videoRatio = vW / vH;
+    const canvasRatio = cW / cH;
+    let drawW, drawH, x, y;
+
+    if (videoRatio > canvasRatio) { 
+        drawH = cH;
+        drawW = drawH * videoRatio;
+        x = (cW - drawW) / 2;
+        y = 0;
+    } else { 
+        drawW = cW;
+        drawH = drawW / videoRatio;
+        x = 0;
+        y = (cH - drawH) / 2;
+    }
+
+    ctx.clearRect(0, 0, cW, cH);
+    if (usingFront) {
+        ctx.save();
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, -x, y, -drawW, drawH); 
+        ctx.restore();
+    } else {
+        ctx.drawImage(video, x, y, drawW, drawH);
+    }
+    
+    if (frame.complete && frame.naturalWidth > 0 && frame.style.opacity === '1') {
+        ctx.drawImage(frame, 0, 0, cW, cH);
+    }
+}
+
+let drawLoopId = null;
+function drawLoop(){
+  if (drawLoopId) return;
+  function loop(){
+    if (videoReady && !drawInterval) drawToCanvas(); 
+    drawLoopId = requestAnimationFrame(loop);
+  }
+  loop();
+}
+
+async function showFrameWhenReady() {
+    try {
+        await new Promise((res, rej) => {
+            frame.onload = () => res();
+            frame.onerror = () => res(); 
+            if (frame.complete) res();
+        });
+        frame.style.opacity = '1';
+    } catch (e) { 
+        frame.style.opacity = '1'; 
+    }
+}
+
+function startTimer(){
+  elapsed = 0;
+  timerEl.style.display = 'block';
+  timerEl.textContent = '0.0s';
+  timerInt = setInterval(()=> {
+    elapsed += 0.1;
+    timerEl.textContent = elapsed.toFixed(1) + 's';
+  },100);
+}
+
+function stopTimer(){
+  clearInterval(timerInt);
+  timerInt = null;
+  timerEl.style.display = 'none';
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* FOTO (PNG)                                                               */
+/* -------------------------------------------------------------------------- */
+
+photoBtn.addEventListener('click', async () => {
+  if (!videoReady) {
+    alert('Aguarde a câmera carregar.');
+    return;
+  }
+
+  drawToCanvas();
+
+  const dataUrl = canvas.toDataURL('image/png');
+  const blob = await (await fetch(dataUrl)).blob();
+  
+  preview.style.display = 'flex';
+  previewPhoto.style.display = 'block';
+  previewVideo.style.display = 'none';
+  previewPhoto.src = dataUrl;
+  previewButtons.style.display = 'flex';
+  
+  saveBtn.textContent = 'Salvar Foto (PNG)'; 
+  saveBtn.disabled = false;
+  retryBtn.disabled = false;
+
+  saveBtn.onclick = () => {
+      handleSave(blob, "foto.png", blob.type);
+  };
+  
+  retryBtn.onclick = handleRetry;
+});
+
+
+/* -------------------------------------------------------------------------- */
+/* VÍDEO (Gravação e Conversão MP4)                                         */
+/* -------------------------------------------------------------------------- */
+
+async function startRecording(){
+  if (!videoReady) {
+    alert('Aguarde a câmera carregar.');
+    return;
+  }
+  
+  if (drawInterval) clearInterval(drawInterval);
+  drawInterval = setInterval(() => {
+    drawToCanvas();
+  }, 33); 
+
+  const canvasStream = canvas.captureStream(30); 
+  
+  const audioTracks = stream ? stream.getAudioTracks() : [];
+  if (audioTracks && audioTracks.length) {
+    try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('Falha ao adicionar áudio:', e); }
+  }
+
+  recordedChunks = [];
+  let options = { mimeType: 'video/webm;codecs=vp8,opus' }; 
+
+  try {
+    recorder = new MediaRecorder(canvasStream, options);
+  } catch (e) {
+    console.error("Erro ao inicializar MediaRecorder:", e);
+    alert("Erro crítico: O navegador não suporta a gravação de vídeo.");
+    if (drawInterval) clearInterval(drawInterval);
+    drawInterval = null;
+    return;
+  }
+
+  recorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
+
+  recorder.onstop = async () => {
+    stopTimer();
+    if (drawInterval) clearInterval(drawInterval);
+    drawInterval = null;
+    recordBtn.classList.remove('recording');
+
+    if (recordedChunks.length === 0) { alert('Erro: Nenhuma gravação capturada.'); return; }
+    
+    loadingOverlay.style.display = 'flex';
+    loadingOverlay.textContent = 'Iniciando conversão...';
+
+    const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+    let finalBlob = webmBlob;
+    let fileNameOut = 'video_capturado.mp4';
+    let fileType = 'video/mp4';
+    
+    
+    // Tenta a conversão para MP4
+    if (ffmpeg) {
+      try {
+        
+        const data = await FFmpeg.fetchFile(webmBlob);
+        ffmpeg.FS('writeFile', 'input.webm', data);
+
+        // Parâmetros otimizados para MP4 (resolve "arquivo corrompido")
+        await ffmpeg.run(
+          '-i','input.webm',
+          '-c:v','libx264',
+          '-preset','veryfast',
+          '-crf','23', 
+          '-c:a','aac',
+          '-b:a','128k',
+          '-movflags','faststart', 
+          'output.mp4'
+        );
+
+        const mp4Data = ffmpeg.FS('readFile', 'output.mp4');
+        finalBlob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
+        
+        try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
+        
+      } catch (e) {
+        console.error('Falha na conversão para MP4. Usando WEBM.', e);
+        // Oculta o alerta, pois o vídeo será salvo como WEBM
+        finalBlob = webmBlob;
+        fileNameOut = 'video_capturado.webm';
+        fileType = 'video/webm';
+      }
+    }
+    
+    loadingOverlay.style.display = 'none';
+
+    // Exibir prévia
+    currentPreviewUrl = URL.createObjectURL(finalBlob);
+    preview.style.display = 'flex';
+    previewButtons.style.display = 'flex';
+    previewPhoto.style.display = 'none';
+    previewVideo.style.display = 'block';
+    previewVideo.src = currentPreviewUrl;
+    previewVideo.load();
+    previewVideo.play();
+    
+    saveBtn.textContent = `Salvar Vídeo (${fileType.split('/')[1].toUpperCase()})`;
+    saveBtn.disabled = false;
+    retryBtn.disabled = false;
+
+    saveBtn.onclick = () => {
+        handleSave(finalBlob, fileNameOut, fileType);
+    };
+
+    retryBtn.onclick = handleRetry;
+  };
+
+  recorder.start();
+  startTimer();
+  recordBtn.classList.add('recording');
+}
+
+function stopRecording(){
+  if (recorder && recorder.state !== 'inactive') {
+    try { recorder.stop(); } catch(e){ console.warn(e); }
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* BINDINGS E EVENTOS                                                      */
+/* -------------------------------------------------------------------------- */
+
+switchBtn.addEventListener('click', async () => {
+    usingFront = !usingFront;
+    await startCamera();
+});
+
+(function bindPressHold(){
+  recordBtn.addEventListener('contextmenu', e => e.preventDefault());
+
+  const handleStartRecording = async (e) => {
+    e.preventDefault();
+    if (!videoReady) await startCamera();
+    if (recorder && recorder.state !== 'inactive') return; 
+    await startRecording();
+  };
+  
+  const handleStopRecording = (e) => {
+    e.preventDefault();
+    stopRecording();
+  };
+
+  recordBtn.addEventListener('pointerdown', handleStartRecording);
+  recordBtn.addEventListener('pointerup', handleStopRecording);
+  recordBtn.addEventListener('pointercancel', handleStopRecording);
+
+  recordBtn.addEventListener('touchstart', handleStartRecording, {passive:false});
+  recordBtn.addEventListener('touchend', handleStopRecording, {passive:false});
+  recordBtn.addEventListener('touchcancel', handleStopRecording, {passive:false});
+
+  recordBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (!recorder || recorder.state === 'inactive') {
+      if (!videoReady) await startCamera();
+      await startRecording();
+      setTimeout(()=> stopRecording(), 3000);
+    } else {
+      stopRecording();
+    }
+  });
+})();
+
+window.addEventListener('pagehide', () => {
+  try {
+    if (stream) stream.getTracks().forEach(t=>t.stop());
+    if (currentPreviewUrl) URL.revokeObjectURL(currentPreviewUrl);
+  } catch(e){}
+});
+</script>
+</body>
+</html>
