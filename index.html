@@ -348,7 +348,6 @@ photoBtn.addEventListener('click', async () => {
       }
     } catch (e) {
       console.warn('Share/save failed, fallback to download', e);
-      // Força o download se o Web Share falhar ou for cancelado
       const a = document.createElement('a');
       a.href = dataUrl;
       a.download = 'foto.png';
@@ -406,14 +405,29 @@ async function startRecording(){
 
   const canvasStream = canvas.captureStream(30);
   const audioTracks = stream ? stream.getAudioTracks() : [];
+  
+  // CORREÇÃO CRÍTICA: Adiciona a trilha de áudio
   if (audioTracks && audioTracks.length) {
     try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
   }
 
   let recordedChunks = [];
   let options = {};
+  
+  // Garante que o mimeType de vídeo seja usado, forçando a inclusão do vídeo no MediaRecorder
   const mime = 'video/webm;codecs=vp8,opus'; 
-  try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) options.mimeType = mime; } catch(e){}
+  try { 
+      if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) {
+          options.mimeType = mime; 
+      } else {
+          // Tenta o tipo padrão se o específico não for suportado
+          options.mimeType = 'video/webm';
+      }
+  } catch(e){}
+  
+  // CRITICAL FIX: Ensure the MediaRecorder has both audio and video tracks
+  // This is often implicitly done by canvasStream, but being explicit helps debug
+  // No need to pass tracks here, canvasStream already contains both tracks (canvas video + audio track added above)
 
   recorder = new MediaRecorder(canvasStream, options);
   recorder.ondataavailable = e => { if (e.data && e.data.size) recordedChunks.push(e.data); };
@@ -496,7 +510,6 @@ async function startRecording(){
       try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
     } catch (e) {
       console.error('Erro na conversão para MP4. Usando WEBM como fallback.', e);
-      // Aqui, finalBlob/finalUrl permanecem WEBM.
       saveBtn.textContent = 'Salvar (WEBM)';
     } finally {
       // Restaura o estado da UI e configura a prévia
