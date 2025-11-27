@@ -35,7 +35,7 @@
     object-fit:contain;
     z-index:3;
     pointer-events:none;
-    opacity:0;              /* carregamento rápido */
+    opacity:0;             
     transition:opacity .2s;
   }
 
@@ -87,7 +87,7 @@
       position: fixed; inset: 0;
       background: rgba(0, 0, 0, 0.8);
       color: #fff;
-      display: none; /* Inicia oculto */
+      display: none; 
       flex-direction: column;
       justify-content: center;
       align-items: center;
@@ -182,8 +182,6 @@ async function autoSaveMedia(blob, fileName, fileType) {
         a.href = url;
         a.download = fileName;
         
-        // Usa setTimeout para garantir que o navegador não bloqueie o download
-        // por não estar imediatamente associado a um clique do usuário.
         setTimeout(() => {
             a.click();
             document.body.removeChild(a);
@@ -222,10 +220,8 @@ async function startCamera(){
     }
 
     const constraints = {
-      // Para o erro "Could not start audio source", o ideal é tentar SÓ a câmera
-      // e depois adicionar o áudio. Mas o padrão é tentar ambos. Vamos manter o padrão.
       video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: true // Tentar áudio, mas se falhar (o erro anterior), o vídeo deve funcionar
+      audio: true
     };
 
     stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -258,7 +254,6 @@ async function startCamera(){
     showFrameWhenReady();
     drawToCanvas();
     
-    // Se o áudio falhar (erro anterior), o stream ainda deve conter o vídeo
     if (stream.getAudioTracks().length === 0) {
         console.warn("Aviso: Falha ao iniciar a fonte de áudio. A gravação do vídeo será silenciosa.");
     }
@@ -328,17 +323,13 @@ photoBtn.addEventListener('click', async () => {
     return;
   }
 
-  // 1. Tira a foto (Desenha a última moldura no canvas)
   drawToCanvas();
 
-  // 2. Converte para Blob
   const dataUrl = canvas.toDataURL('image/png');
   const blob = await (await fetch(dataUrl)).blob();
   
-  // 3. Salva automaticamente
   await autoSaveMedia(blob, "foto.png", blob.type);
 
-  // 4. Retorna à câmera (Não precisa de Refazer)
 });
 
 /* -------------------------------------------------------------------------- */
@@ -361,7 +352,24 @@ async function startRecording(){
 
   drawToCanvas();
 
-  const canvasStream = canvas.captureStream(30);
+  // Captura o stream do canvas, forçando 30 FPS
+  const canvasStream = canvas.captureStream(30); 
+  
+  // OBTÉM A TRILHA DE VÍDEO E FORÇA O FPS (Ajuste Crítico)
+  const videoTrack = canvasStream.getVideoTracks()[0];
+  if (videoTrack) {
+    try {
+        videoTrack.applyConstraints({ frameRate: 30, facingMode: usingFront ? 'user' : 'environment' });
+        console.log("Video Track Constraints aplicados com sucesso.");
+    } catch(e) {
+        console.warn("Falha ao aplicar Video Track Constraints:", e);
+    }
+  } else {
+      console.warn("Nenhuma trilha de vídeo encontrada no canvas stream. A gravação falhará.");
+      alert("Aviso: O navegador não conseguiu gerar a trilha de vídeo do canvas.");
+  }
+
+
   const audioTracks = stream ? stream.getAudioTracks() : [];
   
   // Adiciona a trilha de áudio
@@ -369,9 +377,6 @@ async function startRecording(){
     try { canvasStream.addTrack(audioTracks[0]); } catch(e){ console.warn('addTrack failed', e); }
   }
 
-  if (canvasStream.getVideoTracks().length === 0) {
-      alert("Aviso: Nenhuma trilha de vídeo foi detectada no Canvas Stream. A gravação do vídeo pode falhar.");
-  }
 
   let recordedChunks = [];
   let options = {};
@@ -397,12 +402,11 @@ async function startRecording(){
 
   recorder.onstop = async () => {
     stopTimer();
-    // Para o intervalo de desenho agressivo
+    
     if (drawInterval) clearInterval(drawInterval);
     drawInterval = null;
     
     recordBtn.classList.remove('recording');
-    console.log('Gravação finalizada. Total de chunks:', recordedChunks.length);
 
     if (recordedChunks.length === 0) {
         alert('Erro: Nenhuma gravação capturada. Tente gravar por mais tempo.');
@@ -418,7 +422,6 @@ async function startRecording(){
     // Salva automaticamente
     await autoSaveMedia(finalBlob, 'video_capturado.webm', finalBlob.type);
     
-    // Não precisa de refazer ou preview, volta para a câmera.
   };
 
   recorder.start();
@@ -466,6 +469,8 @@ function stopTimer(){
     if (!videoReady) {
       await startCamera();
     }
+    // Verifica se a gravação já está em andamento (para evitar iniciar 2 vezes)
+    if (recorder && recorder.state !== 'inactive') return; 
     await startRecording();
   };
   
@@ -474,7 +479,6 @@ function stopTimer(){
     stopRecording();
   };
 
-  // Botão de gravação - Lógica de Pressionar e Soltar (ou Click)
   recordBtn.addEventListener('pointerdown', handleStartRecording);
   recordBtn.addEventListener('pointerup', handleStopRecording);
   recordBtn.addEventListener('pointercancel', handleStopRecording);
@@ -485,7 +489,7 @@ function stopTimer(){
 
   recordBtn.addEventListener('click', async (e) => {
     e.preventDefault();
-    if (!recorder) {
+    if (!recorder || recorder.state === 'inactive') {
       if (!videoReady) await startCamera();
       await startRecording();
       // Auto-stop após 3s para clicks rápidos
