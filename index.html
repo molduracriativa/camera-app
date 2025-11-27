@@ -352,7 +352,7 @@ photoBtn.addEventListener('click', async () => {
   saveBtn.disabled = false;
   retryBtn.disabled = false;
 
-  // ** Lógica Salvar Foto (Ajustada) **
+  // ** Lógica Salvar Foto **
   saveBtn.onclick = async () => {
     try {
       // 1. Tenta Web Share Files
@@ -388,7 +388,7 @@ photoBtn.addEventListener('click', async () => {
     }
   };
   
-  // ** Lógica Refazer Foto (Ajustada) **
+  // ** Lógica Refazer Foto **
   retryBtn.onclick = () => {
     preview.style.display = 'none';
     previewButtons.style.display = 'none';
@@ -403,14 +403,17 @@ photoBtn.addEventListener('click', async () => {
 async function ensureFFmpegLoaded(){
   if (ffmpeg || ffmpegLoading) return;
   ffmpegLoading = true;
+  console.log('Iniciando carregamento do FFmpeg...');
   try {
     // Definindo o corePath explicitamente para garantir que seja encontrado no CDN
     const CORE_PATH = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.5/dist/ffmpeg-core.js';
     ffmpeg = FFmpeg.createFFmpeg({ log: false, corePath: CORE_PATH });
     await ffmpeg.load();
+    console.log('FFmpeg carregado com sucesso.');
   } catch (e) {
     console.error('FFmpeg load failed', e);
     ffmpeg = null;
+    alert('Erro ao carregar o FFmpeg. A conversão de vídeo para MP4 falhará, mas o vídeo WEBM pode ser salvo.');
   } finally {
     ffmpegLoading = false;
   }
@@ -443,7 +446,8 @@ async function startRecording(){
 
   let recordedChunks = [];
   let options = {};
-  const mime = 'video/webm;codecs=vp8,opus';
+  // Tentativa de usar VP8/Opus (mais comum em navegadores)
+  const mime = 'video/webm;codecs=vp8,opus'; 
   try { if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mime)) options.mimeType = mime; } catch(e){}
 
   recorder = new MediaRecorder(canvasStream, options);
@@ -452,6 +456,16 @@ async function startRecording(){
   recorder.onstop = async () => {
     stopTimer();
     recordBtn.classList.remove('recording');
+    console.log('Gravação finalizada. Total de chunks:', recordedChunks.length);
+
+
+    if (recordedChunks.length === 0) {
+        alert('Erro: Nenhuma gravação capturada. Tente novamente.');
+        // Oculta prévia e botões se a gravação falhou
+        preview.style.display = 'none';
+        previewButtons.style.display = 'none';
+        return;
+    }
 
     const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     const webmUrl = URL.createObjectURL(webmBlob);
@@ -471,13 +485,14 @@ async function startRecording(){
     // convert to MP4 using ffmpeg (lazy load)
     try {
       await ensureFFmpegLoaded();
-      if (!ffmpeg) throw new Error('ffmpeg failed to load');
+      if (!ffmpeg) throw new Error('ffmpeg failed to load or was not available.');
 
       // Feedback de conversão
       previewVideo.style.filter = 'brightness(50%)';
       saveBtn.disabled = true;
       retryBtn.disabled = true;
       saveBtn.textContent = 'Processando Vídeo...';
+      console.log('Iniciando conversão para MP4...');
 
       const data = await FFmpeg.fetchFile(webmBlob);
       ffmpeg.FS('writeFile', 'input.webm', data);
@@ -502,12 +517,13 @@ async function startRecording(){
       finalFileName = 'video.mp4';
       finalFileType = 'video/mp4';
       finalUrl = mp4Url;
+      console.log('Conversão para MP4 bem-sucedida.');
 
       // cleanup ffmpeg FS
       try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
     } catch (e) {
-      console.error('convert error, playing webm fallback', e);
-      // Fallback para WEBM
+      console.error('Erro na conversão para MP4. Usando WEBM como fallback.', e);
+      // Fallback para WEBM é automático, variáveis finais já estão com webmBlob/webmUrl
     } finally {
       // Restaura o estado da UI
       previewVideo.style.filter = 'none';
@@ -518,8 +534,10 @@ async function startRecording(){
       // Exibe o vídeo final (MP4 ou WEBM fallback)
       previewVideo.src = finalUrl;
       previewVideo.load();
+      console.log('Prévia do vídeo configurada. Configurando botões Salvar/Refazer.');
 
-      // ** Lógica Salvar Vídeo (Ajustada) **
+
+      // ** Lógica Salvar Vídeo (Corrigida) **
       saveBtn.onclick = async () => {
         try {
           const file = new File([finalBlob], finalFileName, { type: finalFileType });
@@ -557,7 +575,7 @@ async function startRecording(){
         }
       };
 
-      // ** Lógica Refazer Vídeo (Ajustada) **
+      // ** Lógica Refazer Vídeo (Corrigida) **
       retryBtn.onclick = () => {
         preview.style.display = 'none';
         previewButtons.style.display = 'none';
@@ -567,6 +585,7 @@ async function startRecording(){
         if (finalUrl && finalUrl !== webmUrl) {
             URL.revokeObjectURL(finalUrl); // Limpa o mp4 se for diferente
         }
+        console.log('Refazer vídeo executado. URLs revogadas.');
       };
     }
   };
