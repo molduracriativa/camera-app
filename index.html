@@ -204,7 +204,7 @@ let drawInterval = null;
 // --- Configuração FFmpeg ---
 const { createFFmpeg, fetchFile } = FFmpeg;
 const ffmpeg = createFFmpeg({ 
-    log: false, // Mude para true se precisar de debug no console
+    log: false, 
     corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.5/dist/ffmpeg-core.js' 
 });
 let ffmpegLoaded = false;
@@ -262,27 +262,22 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
     try {
         const file = new File([blob], fileName, { type: fileType });
 
-        // Tenta 1: Web Share Files (Somente MP4 é confiável aqui)
-        // Se a conversão falhou (WEBM), ou se é foto, tentamos compartilhar.
+        // Tenta 1: Web Share Files (API moderna de compartilhamento)
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
-                // Tenta compartilhar. Se falhar, vamos para o Download.
+                // Tenta compartilhar. Se for MP4 válido, é a melhor solução para ir para a galeria.
                 await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
                 
                 // Se o compartilhamento foi bem-sucedido, a função acaba aqui.
                 handleRetry(); 
                 return; 
             } catch (shareError) {
-                // Falha no compartilhamento (muito comum em mobile)
-                console.error('Falha no Web Share. Tentando Download Direto:', shareError);
-                // Continua para o Download Direto.
+                // Falha no compartilhamento (continua para o Download Direto)
+                console.warn('Falha no Web Share API. Tentando Download Direto:', shareError);
             }
-        } else if (navigator.canShare) {
-             console.log("Web Share API disponível, mas não pode compartilhar o arquivo atual (formato ou tamanho).");
         }
 
-
-        // Tenta 2: Download Direto (O MAIS ROBUSTO)
+        // Tenta 2: Download Direto (O MAIS ROBUSTO, mas requer 2 confirmações)
         const url = finalUrlToRevoke || URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -291,8 +286,10 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
         setTimeout(() => {
             a.click();
             document.body.removeChild(a);
-            // Instrução CRÍTICA:
-            alert(`Download de ${fileName} iniciado! Por favor, **CONFIRME O DOWNLOAD** na caixa de diálogo do seu navegador. Após o download, o arquivo estará na sua galeria/pasta de downloads.`);
+            
+            // INSTRUÇÃO CRÍTICA PARA O USUÁRIO
+            alert(`Download de ${fileName} iniciado! Por favor, **CONFIRME O DOWNLOAD** na caixa de diálogo que aparece no topo/fundo do seu navegador. O download move o arquivo para a sua galeria.`);
+            
             handleRetry();
         }, 100);
         
@@ -310,7 +307,6 @@ async function handleSave(blob, fileName, fileType, finalUrlToRevoke) {
 
 // Função para voltar para a câmera
 function handleRetry() {
-    // ... (mantido)
     preview.style.display = 'none';
     previewButtons.style.display = 'none';
     previewPhoto.src = '';
@@ -318,24 +314,11 @@ function handleRetry() {
     previewVideo.pause();
     saveBtn.onclick = null; 
     retryBtn.onclick = null; 
-    conversionSucceeded = false; // Reset status da conversão
+    conversionSucceeded = false;
 }
 
-
-async function showFrameWhenReady() {
-  try {
-    if (frame && !frame.complete) {
-      await new Promise((res, rej) => {
-        frame.onload = () => res();
-        frame.onerror = () => res(); 
-      });
-    }
-    frame.style.opacity = '1';
-  } catch (e) { frame.style.opacity = '1'; }
-}
 
 async function startCamera(){
-  // ... (função startCamera)
   try {
     videoReady = false;
     if (stream) {
@@ -371,10 +354,15 @@ async function startCamera(){
     enable.style.display = 'none';
     controls.style.display = 'flex';
 
-    showFrameWhenReady();
+    await new Promise(res => {
+        frame.onload = res;
+        frame.onerror = res;
+        if (frame.complete) res();
+    });
+    frame.style.opacity = '1';
     drawToCanvas();
     
-    // CHAMADA CRÍTICA: Pré-carrega o conversor de vídeo
+    // Pré-carrega o conversor de vídeo
     loadFFmpeg();
     
   } catch (err) {
@@ -383,8 +371,11 @@ async function startCamera(){
   }
 }
 
+// ... (drawToCanvas, drawLoop, stopDrawLoop, startTimer, stopTimer - funções mantidas) ...
+
 function drawToCanvas() {
     if (!videoReady) return;
+
     const vW = video.videoWidth;
     const vH = video.videoHeight;
     const cW = canvas.width;
@@ -461,7 +452,6 @@ photoBtn.addEventListener('click', async () => {
   const dataUrl = canvas.toDataURL('image/png');
   const blob = await (await fetch(dataUrl)).blob();
   
-  // Exibir prévia da foto
   preview.style.display = 'flex';
   previewPhoto.style.display = 'block';
   previewVideo.style.display = 'none';
@@ -472,17 +462,15 @@ photoBtn.addEventListener('click', async () => {
   saveBtn.disabled = false;
   retryBtn.disabled = false;
 
-  // Atribuir lógica de salvamento ao botão Salvar
   saveBtn.onclick = () => {
       handleSave(blob, "foto.png", blob.type);
   };
   
-  // Atribuir lógica de refazer ao botão Refazer
   retryBtn.onclick = handleRetry;
 });
 
 /* -------------------------------------------------------------------------- */
-/* VÍDEO (GRAVAÇÃO) - COM CONVERSÃO PARA MP4                             */
+/* VÍDEO (GRAVAÇÃO) - COM CONVERSÃO PARA MP4 OTIMIZADA                    */
 /* -------------------------------------------------------------------------- */
 
 async function startRecording(){
@@ -494,7 +482,6 @@ async function startRecording(){
   drawToCanvas();
   const canvasStream = canvas.captureStream(30); 
   
-  // ... (código de setup do MediaRecorder mantido) ...
   const videoTrack = canvasStream.getVideoTracks()[0];
   if (videoTrack) {
     try {
@@ -549,7 +536,7 @@ async function startRecording(){
     // Tentar conversão SÓ SE o FFmpeg estiver carregado
     if (ffmpegLoaded) {
         loadingOverlay.style.display = 'flex';
-        loadingOverlay.textContent = 'Convertendo vídeo para MP4... (Pode levar um tempo)';
+        loadingOverlay.textContent = 'Convertendo vídeo para MP4... (Otimizado para ser rápido)';
         
         try {
             const fileNameIn = 'input.webm';
@@ -557,10 +544,12 @@ async function startRecording(){
             
             await ffmpeg.FS('writeFile', fileNameIn, await fetchFile(webmBlob));
             
-            // Comando de conversão para MP4
+            // Comando de conversão OTIMIZADO para velocidade e compatibilidade
             await ffmpeg.run(
                 '-i', fileNameIn, 
                 '-c:v', 'libx264', 
+                '-preset', 'ultrafast', // Otimização CRÍTICA para evitar timeout
+                '-crf', '30',           // Aumenta a compressão para reduzir o tamanho do arquivo
                 '-pix_fmt', 'yuv420p', 
                 '-movflags', '+faststart', 
                 fileNameOut
@@ -580,8 +569,6 @@ async function startRecording(){
             console.error('Erro na conversão para MP4. Servindo o WEBM original:', e);
             alert('Atenção: Falha na conversão para MP4. O vídeo será salvo como WEBM e *pode* dar erro na galeria.');
         }
-    } else {
-        alert('Aviso: Conversor de MP4 não carregado. O vídeo será salvo como WEBM.');
     }
     
     loadingOverlay.style.display = 'none';
