@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Versão Final Estável</title>
+<title>Moldura Criativa - Versão Final Estável OTIMIZADA</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.5/dist/ffmpeg.min.js"></script>
 
 <style>
-  /* [ESTILOS OMITIDOS PARA BREVIDADE, MANTENHA O CONTEÚDO STYLE COMPLETO] */
+  /* [ESTILOS OMITIDOS PARA BREVIDADE] */
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
     width:100%; height:100%;
@@ -205,6 +205,7 @@ let drawInterval = null;
 let ffmpeg = null;
 let ffmpegLoading = false;
 let currentPreviewUrl = null; 
+let ffmpegLoaded = false; // NOVA VARIÁVEL
 
 // --- Elementos DOM ---
 const video=document.getElementById("video");
@@ -225,8 +226,8 @@ const previewButtons=document.getElementById("preview-buttons");
 const saveBtn=document.getElementById("save");
 const retryBtn=document.getElementById("retry");
 
-// SOLUÇÃO: MUDANÇA DE CDN
-// Esta URL usa unpkg.com, um CDN diferente do anterior (jsdelivr.net)
+// SOLUÇÃO CRÍTICA: MUDANÇA DE CDN E DEFINIÇÃO EXPLÍCITA DO CORE PATH
+// Este CDN é mais estável para o core do FFmpeg versão 0.12.5.
 const CORE_BASE_URL = "https://unpkg.com/@ffmpeg/core@0.12.5/dist"; 
 
 
@@ -234,32 +235,52 @@ const CORE_BASE_URL = "https://unpkg.com/@ffmpeg/core@0.12.5/dist";
 /* FFmpeg e Salvamento (MP4 e Fotos)                                         */
 /* -------------------------------------------------------------------------- */
 
-// Pré-carrega o FFmpeg ao carregar a página
+// Função otimizada para carregar o FFmpeg em background
 async function ensureFFmpegLoaded(){
-  if (ffmpeg || ffmpegLoading) return true;
+  if (ffmpegLoaded || ffmpegLoading) return true;
   ffmpegLoading = true;
-  if(videoReady) loadingOverlay.style.display = 'flex';
-  loadingOverlay.textContent = 'Carregando recursos de conversão...';
   
+  // Exibe a tela de carregamento APENAS se o vídeo já estiver pronto
+  if (videoReady) {
+      loadingOverlay.style.display = 'flex';
+  } else {
+      // Se a câmera ainda não abriu, apenas atualiza o texto de overlay (se estiver visível)
+      loadingOverlay.textContent = 'Carregando recursos de câmera e conversão...';
+  }
+
   try {
     ffmpeg = FFmpeg.createFFmpeg({ 
         log: false,
-        corePath: `${CORE_BASE_URL}/ffmpeg-core.js`, // Caminho explícito para o novo CDN
+        // CORREÇÃO: Define explicitamente o caminho para o core do FFmpeg
+        corePath: `${CORE_BASE_URL}/ffmpeg-core.js`, 
         progress: ({ ratio }) => {
             if (ratio < 0 || ratio > 1) return;
-            loadingOverlay.textContent = `Convertendo: ${Math.round(ratio * 100)}%`;
+            // Atualiza o texto APENAS durante a conversão
+            if (ratio > 0 && ratio < 1) { 
+                loadingOverlay.textContent = `Convertendo: ${Math.round(ratio * 100)}%`;
+            } else if (ratio === 0) {
+                loadingOverlay.textContent = 'Preparando conversão...';
+            }
         }
     });
+    
+    // O .load() é a etapa mais lenta, carrega o .wasm (~20MB)
+    loadingOverlay.textContent = 'Baixando motor de conversão MP4 (~20MB)...';
     await ffmpeg.load();
+    
+    ffmpegLoaded = true;
     return true;
   } catch (e) {
     console.error('FFmpeg load failed', e);
     ffmpeg = null;
-    alert('❌ FALHA AO CARREGAR CONVERSOR MP4. Por favor, verifique a conexão com a internet e tente novamente.');
+    alert('❌ FALHA AO CARREGAR CONVERSOR MP4. O vídeo será salvo como WEBM. Por favor, verifique a conexão com a internet.');
     return false;
   } finally {
     ffmpegLoading = false;
-    if (videoReady) loadingOverlay.style.display = 'none';
+    // Oculta o overlay APENAS se o vídeo já estiver pronto para uso
+    if (videoReady && !ffmpegLoaded) { // Se falhou, mas a câmera abriu
+         loadingOverlay.style.display = 'none';
+    }
   }
 }
 
@@ -335,16 +356,23 @@ function handleRetry() {
 
 async function startCamera(){
   try {
-    loadingOverlay.style.display = 'flex';
-    loadingOverlay.textContent = 'Solicitando acesso à câmera...';
+    // Se o FFmpeg ainda está carregando, garante que o texto do overlay seja mais informativo
+    if (!ffmpegLoaded && ffmpegLoading) {
+        loadingOverlay.textContent = 'Carregando recursos de câmera e conversão...';
+    } else {
+        loadingOverlay.style.display = 'flex';
+        loadingOverlay.textContent = 'Solicitando acesso à câmera...';
+    }
+
     videoReady = false;
     if (stream) {
       stream.getTracks().forEach(t=>t.stop());
       stream = null;
     }
 
+    // Tentar resoluções mais seguras primeiro
     const constraints = {
-      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
       audio: true
     };
 
@@ -371,7 +399,14 @@ async function startCamera(){
     // UI de sucesso
     enable.style.display = 'none';
     controls.style.display = 'flex';
-    loadingOverlay.style.display = 'none';
+    // Oculta o overlay APENAS se o FFmpeg já estiver carregado ou falhou
+    if (ffmpegLoaded || !ffmpegLoading) {
+        loadingOverlay.style.display = 'none';
+    } else {
+        loadingOverlay.textContent = 'Recursos de conversão MP4 carregando em segundo plano...';
+        // Mantém a UI de loading, mas permite o uso da câmera
+    }
+    
     showFrameWhenReady(); 
     drawToCanvas();
     drawLoop(); 
@@ -421,8 +456,10 @@ function drawToCanvas() {
     ctx.clearRect(0, 0, cW, cH);
     if (usingFront) {
         ctx.save();
+        // CORREÇÃO: Ajusta o espelhamento horizontal para a câmera frontal
+        ctx.translate(cW, 0); 
         ctx.scale(-1, 1);
-        ctx.drawImage(video, -x, y, -drawW, drawH); 
+        ctx.drawImage(video, x, y, drawW, drawH);
         ctx.restore();
     } else {
         ctx.drawImage(video, x, y, drawW, drawH);
@@ -516,10 +553,11 @@ async function startRecording(){
     return;
   }
   
-  if (drawInterval) clearInterval(drawInterval);
+  // Limpa o loop de desenho principal e inicia o loop de desenho rápido
+  if (drawLoopId) cancelAnimationFrame(drawLoopId); // CORREÇÃO: Interrompe o loop principal
   drawInterval = setInterval(() => {
     drawToCanvas();
-  }, 33); 
+  }, 33); // Aproximadamente 30 FPS
 
   const canvasStream = canvas.captureStream(30); 
   
@@ -529,6 +567,7 @@ async function startRecording(){
   }
 
   recordedChunks = [];
+  // Use 'video/webm' como padrão, é o formato com melhor suporte para MediaRecorder em browsers
   let options = { mimeType: 'video/webm;codecs=vp8,opus' }; 
 
   try {
@@ -538,6 +577,7 @@ async function startRecording(){
     alert("Erro crítico: O navegador não suporta a gravação de vídeo.");
     if (drawInterval) clearInterval(drawInterval);
     drawInterval = null;
+    drawLoop(); // Reinicia o loop de desenho principal
     return;
   }
 
@@ -547,49 +587,53 @@ async function startRecording(){
     stopTimer();
     if (drawInterval) clearInterval(drawInterval);
     drawInterval = null;
+    drawLoop(); // Reinicia o loop de desenho principal
     recordBtn.classList.remove('recording');
 
-    if (recordedChunks.length === 0) { alert('Erro: Nenhuma gravação capturada.'); return; }
+    if (recordedChunks.length === 0) { 
+        alert('Erro: Nenhuma gravação capturada.'); 
+        return; 
+    }
     
     loadingOverlay.style.display = 'flex';
     loadingOverlay.textContent = 'Iniciando conversão...';
 
     const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
     let finalBlob = webmBlob;
-    let fileNameOut = 'video_capturado.mp4';
-    let fileType = 'video/mp4';
+    let fileNameOut = 'video_capturado.webm'; // Padrão
+    let fileType = 'video/webm';
     
     
-    // Tenta a conversão para MP4
-    if (ffmpeg) {
+    // Tenta a conversão para MP4 APENAS se o FFmpeg tiver carregado com sucesso
+    if (ffmpegLoaded && ffmpeg) { 
       try {
         
         const data = await FFmpeg.fetchFile(webmBlob);
         ffmpeg.FS('writeFile', 'input.webm', data);
 
-        // Parâmetros otimizados para MP4 (resolve "arquivo corrompido")
+        // Parâmetros otimizados para MP4 (h264 e faststart)
         await ffmpeg.run(
           '-i','input.webm',
           '-c:v','libx264',
-          '-preset','veryfast',
+          '-preset','veryfast', // Tenta otimizar velocidade em vez de qualidade máxima
           '-crf','23', 
           '-c:a','aac',
           '-b:a','128k',
+          '-pix_fmt','yuv420p', // Formato de pixel mais compatível
           '-movflags','faststart', 
           'output.mp4'
         );
 
         const mp4Data = ffmpeg.FS('readFile', 'output.mp4');
         finalBlob = new Blob([mp4Data.buffer], { type: 'video/mp4' });
+        fileNameOut = 'video_capturado.mp4';
+        fileType = 'video/mp4';
         
         try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
         
       } catch (e) {
         console.error('Falha na conversão para MP4. Usando WEBM.', e);
-        // Oculta o alerta, pois o vídeo será salvo como WEBM
-        finalBlob = webmBlob;
-        fileNameOut = 'video_capturado.webm';
-        fileType = 'video/webm';
+        // Não exibe alerta, pois o WEBM é usado como fallback
       }
     }
     
@@ -636,6 +680,10 @@ switchBtn.addEventListener('click', async () => {
     await startCamera();
 });
 
+// Garante que o FFmpeg comece a carregar o mais cedo possível
+document.addEventListener('DOMContentLoaded', ensureFFmpegLoaded);
+
+
 (function bindPressHold(){
   recordBtn.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -663,8 +711,15 @@ switchBtn.addEventListener('click', async () => {
     e.preventDefault();
     if (!recorder || recorder.state === 'inactive') {
       if (!videoReady) await startCamera();
+      // Inicia a gravação (curta)
       await startRecording();
-      setTimeout(()=> stopRecording(), 3000);
+      // Define um timeout para parar automaticamente após 3 segundos
+      // Isso é útil se o evento 'pointerup' falhar ou se for um clique rápido
+      setTimeout(()=> {
+          if (recorder && recorder.state === 'recording') {
+              stopRecording();
+          }
+      }, 3000); 
     } else {
       stopRecording();
     }
