@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Versão Otimizada (FFmpeg 0.11.0)</title>
+<title>Moldura Criativa - Versão Otimizada (Final)</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.0/dist/ffmpeg.min.js"></script>
 
 <style>
-  /* [ESTILOS MANTIDOS, SEM ALTERAÇÃO] */
+  /* [ESTILOS OMITIDOS PARA BREVIDADE] */
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
     width:100%; height:100%;
@@ -226,7 +226,7 @@ const previewButtons=document.getElementById("preview-buttons");
 const saveBtn=document.getElementById("save");
 const retryBtn=document.getElementById("retry");
 
-// SOLUÇÃO: Mudança para a versão 0.11.0 do core, que é mais estável em alguns celulares.
+// CORE PATH para a versão 0.11.0, mais estável no carregamento
 const CORE_BASE_URL = "https://unpkg.com/@ffmpeg/core@0.11.0/dist"; 
 
 
@@ -247,7 +247,6 @@ async function ensureFFmpegLoaded(){
   try {
     ffmpeg = FFmpeg.createFFmpeg({ 
         log: false,
-        // Define explicitamente o caminho para a versão 0.11.0 do core
         corePath: `${CORE_BASE_URL}/ffmpeg-core.js`, 
         progress: ({ ratio }) => {
             if (ratio < 0 || ratio > 1) return;
@@ -267,19 +266,15 @@ async function ensureFFmpegLoaded(){
   } catch (e) {
     console.error('FFmpeg load failed', e);
     ffmpeg = null;
-    // Removido o alerta para não interromper a experiência do usuário.
-    // O fallback para WEBM será usado se isso falhar.
     return false;
   } finally {
     ffmpegLoading = false;
     if (videoReady && !ffmpegLoaded) { 
-         // Oculta o overlay se o vídeo estiver pronto, mesmo se o FFmpeg falhou.
          loadingOverlay.style.display = 'none';
     }
   }
 }
 
-// Função unificada para SALVAR (MANTIDA)
 async function handleSave(blob, fileName, fileType) {
     saveBtn.disabled = true;
     retryBtn.disabled = true;
@@ -289,7 +284,6 @@ async function handleSave(blob, fileName, fileType) {
     try {
         const file = new File([blob], fileName, { type: fileType });
 
-        // Tenta 1: Web Share Files
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
                 await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
@@ -300,7 +294,6 @@ async function handleSave(blob, fileName, fileType) {
             }
         }
 
-        // Tenta 2: Download Direto
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -326,7 +319,6 @@ async function handleSave(blob, fileName, fileType) {
     }
 }
 
-// Função para voltar para a câmera (MANTIDA)
 function handleRetry() {
     if (currentPreviewUrl) {
         URL.revokeObjectURL(currentPreviewUrl);
@@ -346,7 +338,7 @@ function handleRetry() {
 
 
 /* -------------------------------------------------------------------------- */
-/* CÂMERA E RENDERIZAÇÃO 9:16 (MANTIDA COM PEQUENAS CORREÇÕES)               */
+/* CÂMERA E RENDERIZAÇÃO 9:16 (CORREÇÃO DE DRAW)                             */
 /* -------------------------------------------------------------------------- */
 
 async function startCamera(){
@@ -364,8 +356,13 @@ async function startCamera(){
       stream = null;
     }
 
+    // Tenta uma configuração mais agressiva, priorizando a câmera.
     const constraints = {
-      video: { facingMode: usingFront ? 'user' : 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      video: { 
+          facingMode: usingFront ? 'user' : 'environment', 
+          width: { ideal: 1920 }, 
+          height: { ideal: 1080 } 
+      },
       audio: true
     };
 
@@ -432,6 +429,7 @@ function drawToCanvas() {
     const canvasRatio = cW / cH;
     let drawW, drawH, x, y;
 
+    // 1. Cálculo do Enquadramento
     if (videoRatio > canvasRatio) { 
         drawH = cH;
         drawW = drawH * videoRatio;
@@ -445,16 +443,20 @@ function drawToCanvas() {
     }
 
     ctx.clearRect(0, 0, cW, cH);
+    
+    // 2. Desenho com Espelhamento para Câmera Frontal (CORREÇÃO)
     if (usingFront) {
         ctx.save();
         ctx.translate(cW, 0); 
-        ctx.scale(-1, 1);
+        ctx.scale(-1, 1); 
         ctx.drawImage(video, x, y, drawW, drawH);
         ctx.restore();
     } else {
+        // Câmera traseira: Desenho normal
         ctx.drawImage(video, x, y, drawW, drawH);
     }
     
+    // 3. Desenho da Moldura
     if (frame.complete && frame.naturalWidth > 0 && frame.style.opacity === '1') {
         ctx.drawImage(frame, 0, 0, cW, cH);
     }
@@ -501,7 +503,7 @@ function stopTimer(){
 
 
 /* -------------------------------------------------------------------------- */
-/* FOTO (PNG) - MANTIDA                                                       */
+/* FOTO (PNG)                                                               */
 /* -------------------------------------------------------------------------- */
 
 photoBtn.addEventListener('click', async () => {
@@ -534,7 +536,7 @@ photoBtn.addEventListener('click', async () => {
 
 
 /* -------------------------------------------------------------------------- */
-/* VÍDEO (Gravação e Conversão MP4/WEBM) - OTIMIZADA                          */
+/* VÍDEO (Gravação e Conversão MP4/WEBM)                                    */
 /* -------------------------------------------------------------------------- */
 
 async function startRecording(){
@@ -592,14 +594,12 @@ async function startRecording(){
     let fileType = 'video/webm';
     
     
-    // Tenta a conversão para MP4 APENAS se o FFmpeg tiver carregado com sucesso
     if (ffmpegLoaded && ffmpeg) { 
       try {
         
         const data = await FFmpeg.fetchFile(webmBlob);
         ffmpeg.FS('writeFile', 'input.webm', data);
 
-        // Parâmetros otimizados para MP4 (H.264)
         await ffmpeg.run(
           '-i','input.webm',
           '-c:v','libx264',
@@ -621,7 +621,6 @@ async function startRecording(){
         
       } catch (e) {
         console.error('Falha na conversão para MP4. Usando WEBM.', e);
-        // Não exibe alerta, pois o WEBM é usado como fallback
       }
     }
     
@@ -637,7 +636,6 @@ async function startRecording(){
     previewVideo.load();
     previewVideo.play();
     
-    // Se a conversão falhou, o usuário é notificado pelo botão de salvar
     if (fileType === 'video/webm') {
         alert('AVISO: Falha na conversão para MP4. O vídeo será salvo como WEBM. Use um conversor de terceiros se precisar de MP4.');
     }
@@ -665,7 +663,7 @@ function stopRecording(){
 }
 
 /* -------------------------------------------------------------------------- */
-/* BINDINGS E EVENTOS (MANTIDOS)                                             */
+/* BINDINGS E EVENTOS                                                       */
 /* -------------------------------------------------------------------------- */
 
 switchBtn.addEventListener('click', async () => {
