@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Versão Estável Sem Alertas</title>
+<title>Moldura Criativa - Versão Estável + Limite de Tempo</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.0/dist/ffmpeg.min.js"></script>
 
@@ -206,6 +206,8 @@ let ffmpeg = null;
 let ffmpegLoading = false;
 let currentPreviewUrl = null; 
 let ffmpegLoaded = false; 
+let timeoutRecording = null; // Novo: Timeout para limitar o tempo de gravação
+const MAX_RECORDING_DURATION = 30; // Novo: Limite em segundos
 
 // --- Elementos DOM ---
 const video=document.getElementById("video");
@@ -284,6 +286,7 @@ async function handleSave(blob, fileName, fileType) {
     try {
         const file = new File([blob], fileName, { type: fileType });
 
+        // Tenta 1: Web Share Files
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
                 await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
@@ -294,6 +297,7 @@ async function handleSave(blob, fileName, fileType) {
             }
         }
 
+        // Tenta 2: Download Direto
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -338,7 +342,7 @@ function handleRetry() {
 
 
 /* -------------------------------------------------------------------------- */
-/* CÂMERA E RENDERIZAÇÃO 9:16 (OTIMIZADO)                                    */
+/* CÂMERA E RENDERIZAÇÃO 9:16                                                */
 /* -------------------------------------------------------------------------- */
 
 async function startCamera(){
@@ -352,18 +356,14 @@ async function startCamera(){
 
     videoReady = false;
     
-    // 1. Limpar Streams Anteriores de forma segura
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
       stream = null;
     }
 
-    // 2. Otimização da solicitação: Removemos width/height ideal para agilizar o acesso
     const constraints = {
       video: { 
           facingMode: usingFront ? 'user' : 'environment', 
-          // REMOVIDO: width: { ideal: 1920 }, height: { ideal: 1080 } 
-          // O navegador escolherá a melhor resolução rapidamente
       },
       audio: true
     };
@@ -431,7 +431,6 @@ function drawToCanvas() {
     const canvasRatio = cW / cH;
     let drawW, drawH, x, y;
 
-    // 1. Cálculo do Enquadramento
     if (videoRatio > canvasRatio) { 
         drawH = cH;
         drawW = drawH * videoRatio;
@@ -446,7 +445,6 @@ function drawToCanvas() {
 
     ctx.clearRect(0, 0, cW, cH);
     
-    // 2. Desenho com Espelhamento para Câmera Frontal (CORRETO)
     if (usingFront) {
         ctx.save();
         ctx.translate(cW, 0); 
@@ -454,11 +452,9 @@ function drawToCanvas() {
         ctx.drawImage(video, x, y, drawW, drawH);
         ctx.restore();
     } else {
-        // Câmera traseira: Desenho normal
         ctx.drawImage(video, x, y, drawW, drawH);
     }
     
-    // 3. Desenho da Moldura
     if (frame.complete && frame.naturalWidth > 0 && frame.style.opacity === '1') {
         ctx.drawImage(frame, 0, 0, cW, cH);
     }
@@ -494,6 +490,12 @@ function startTimer(){
   timerInt = setInterval(()=> {
     elapsed += 0.1;
     timerEl.textContent = elapsed.toFixed(1) + 's';
+    
+    // Novo: Verifica se o limite de tempo foi atingido
+    if (elapsed >= MAX_RECORDING_DURATION) {
+        stopRecording();
+        alert(`Gravação máxima de ${MAX_RECORDING_DURATION} segundos atingida. Convertendo vídeo...`);
+    }
   },100);
 }
 
@@ -501,6 +503,8 @@ function stopTimer(){
   clearInterval(timerInt);
   timerInt = null;
   timerEl.style.display = 'none';
+  if (timeoutRecording) clearTimeout(timeoutRecording); // Limpa o timeout, se houver
+  timeoutRecording = null;
 }
 
 
@@ -603,7 +607,7 @@ async function startRecording(){
         const data = await FFmpeg.fetchFile(webmBlob);
         ffmpeg.FS('writeFile', 'input.webm', data);
 
-        // Parâmetros otimizados para MP4 (incluindo yuv420p)
+        // Parâmetros otimizados para MP4
         await ffmpeg.run(
           '-i','input.webm',
           '-c:v','libx264',
@@ -625,7 +629,6 @@ async function startRecording(){
         
       } catch (e) {
         console.error('Falha na conversão para MP4. Usando WEBM.', e);
-        // Silenciosamente volta para WEBM.
       }
     }
     
@@ -641,7 +644,7 @@ async function startRecording(){
     previewVideo.load();
     previewVideo.play();
     
-    // Apenas muda o texto do botão de salvar se a conversão falhou (WEBM)
+    // Alerta silencioso para WEBM
     if (fileType === 'video/webm') {
         console.warn('Conversão para MP4 falhou. O vídeo será salvo como WEBM.');
     }
@@ -674,7 +677,6 @@ function stopRecording(){
 
 switchBtn.addEventListener('click', async () => {
     usingFront = !usingFront;
-    // Otimização: a troca de câmera agora deve ser muito mais rápida
     await startCamera(); 
 });
 
@@ -708,11 +710,9 @@ document.addEventListener('DOMContentLoaded', ensureFFmpegLoaded);
     if (!recorder || recorder.state === 'inactive') {
       if (!videoReady) await startCamera();
       await startRecording();
-      setTimeout(()=> {
-          if (recorder && recorder.state === 'recording') {
-              stopRecording();
-          }
-      }, 3000); 
+      // CORREÇÃO: Removido o setTimeout(stopRecording, 3000) daqui, 
+      // pois o comportamento de toque único agora é "iniciar e esperar o usuário soltar"
+      // ou "iniciar e parar no limite de 30s".
     } else {
       stopRecording();
     }
