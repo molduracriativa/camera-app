@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - foto e video</title>
+<title>Moldura Criativa - Versão Estável Defensiva</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.0/dist/ffmpeg.min.js"></script>
 
@@ -206,8 +206,9 @@ let ffmpeg = null;
 let ffmpegLoading = false;
 let currentPreviewUrl = null; 
 let ffmpegLoaded = false; 
-let timeoutRecording = null; // Novo: Timeout para limitar o tempo de gravação
-const MAX_RECORDING_DURATION = 30; // Novo: Limite em segundos
+let timeoutRecording = null;
+const MAX_RECORDING_DURATION = 30; // Limite em segundos
+let allowMp4Conversion = true; // NOVO: Controle se a conversão MP4 deve ser tentada (desativa em caso de falha de memória)
 
 // --- Elementos DOM ---
 const video=document.getElementById("video");
@@ -268,6 +269,7 @@ async function ensureFFmpegLoaded(){
   } catch (e) {
     console.error('FFmpeg load failed', e);
     ffmpeg = null;
+    allowMp4Conversion = false; // Se o carregamento falhar, desativa a conversão
     return false;
   } finally {
     ffmpegLoading = false;
@@ -286,7 +288,6 @@ async function handleSave(blob, fileName, fileType) {
     try {
         const file = new File([blob], fileName, { type: fileType });
 
-        // Tenta 1: Web Share Files
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
                 await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
@@ -297,7 +298,6 @@ async function handleSave(blob, fileName, fileType) {
             }
         }
 
-        // Tenta 2: Download Direto
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -491,7 +491,6 @@ function startTimer(){
     elapsed += 0.1;
     timerEl.textContent = elapsed.toFixed(1) + 's';
     
-    // Novo: Verifica se o limite de tempo foi atingido
     if (elapsed >= MAX_RECORDING_DURATION) {
         stopRecording();
         alert(`Gravação máxima de ${MAX_RECORDING_DURATION} segundos atingida. Convertendo vídeo...`);
@@ -503,7 +502,7 @@ function stopTimer(){
   clearInterval(timerInt);
   timerInt = null;
   timerEl.style.display = 'none';
-  if (timeoutRecording) clearTimeout(timeoutRecording); // Limpa o timeout, se houver
+  if (timeoutRecording) clearTimeout(timeoutRecording); 
   timeoutRecording = null;
 }
 
@@ -564,7 +563,20 @@ async function startRecording(){
   }
 
   recordedChunks = [];
-  let options = { mimeType: 'video/webm;codecs=vp8,opus' }; 
+  
+  // NOVO: Verifica e usa o melhor codec disponível (Defensive Programming)
+  let options = {};
+  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
+      options = { mimeType: 'video/webm;codecs=vp8,opus' }; 
+  } else if (MediaRecorder.isTypeSupported('video/webm')) {
+      options = { mimeType: 'video/webm' };
+  } else {
+      alert("Erro: Este navegador não suporta a gravação de vídeo. Tente o Chrome ou Safari.");
+      if (drawInterval) clearInterval(drawInterval);
+      drawInterval = null;
+      drawLoop();
+      return;
+  }
 
   try {
     recorder = new MediaRecorder(canvasStream, options);
@@ -594,14 +606,14 @@ async function startRecording(){
     loadingOverlay.style.display = 'flex';
     loadingOverlay.textContent = 'Iniciando conversão...';
 
-    const webmBlob = new Blob(recordedChunks, { type: recordedChunks[0]?.type || 'video/webm' });
+    const webmBlob = new Blob(recordedChunks, { type: recorder.mimeType || 'video/webm' });
     let finalBlob = webmBlob;
     let fileNameOut = 'video_capturado.webm'; 
     let fileType = 'video/webm';
     
     
-    // Tenta a conversão para MP4
-    if (ffmpegLoaded && ffmpeg) {
+    // Tenta a conversão para MP4 SOMENTE se permitido E FFmpeg carregado
+    if (ffmpegLoaded && ffmpeg && allowMp4Conversion) {
       try {
         
         const data = await FFmpeg.fetchFile(webmBlob);
@@ -628,7 +640,10 @@ async function startRecording(){
         try { ffmpeg.FS('unlink','input.webm'); ffmpeg.FS('unlink','output.mp4'); } catch(e){}
         
       } catch (e) {
-        console.error('Falha na conversão para MP4. Usando WEBM.', e);
+        console.error('Falha na conversão para MP4. Desativando conversão e usando WEBM.', e);
+        // Desativa a conversão MP4 para evitar falhas futuras devido a memória
+        allowMp4Conversion = false;
+        // O código continua, usando o WEBM (finalBlob já é webmBlob)
       }
     }
     
@@ -710,9 +725,6 @@ document.addEventListener('DOMContentLoaded', ensureFFmpegLoaded);
     if (!recorder || recorder.state === 'inactive') {
       if (!videoReady) await startCamera();
       await startRecording();
-      // CORREÇÃO: Removido o setTimeout(stopRecording, 3000) daqui, 
-      // pois o comportamento de toque único agora é "iniciar e esperar o usuário soltar"
-      // ou "iniciar e parar no limite de 30s".
     } else {
       stopRecording();
     }
