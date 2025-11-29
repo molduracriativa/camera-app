@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
-<title>Moldura Criativa - Versão Otimizada (Final)</title>
+<title>Moldura Criativa - Versão Estável Sem Alertas</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.0/dist/ffmpeg.min.js"></script>
 
@@ -205,7 +205,7 @@ let drawInterval = null;
 let ffmpeg = null;
 let ffmpegLoading = false;
 let currentPreviewUrl = null; 
-let ffmpegLoaded = false; 
+let ffmpegLoaded = false; // Estado do carregamento do FFmpeg
 
 // --- Elementos DOM ---
 const video=document.getElementById("video");
@@ -266,6 +266,7 @@ async function ensureFFmpegLoaded(){
   } catch (e) {
     console.error('FFmpeg load failed', e);
     ffmpeg = null;
+    // O alerta de falha no carregamento foi removido para evitar interrupção.
     return false;
   } finally {
     ffmpegLoading = false;
@@ -284,6 +285,7 @@ async function handleSave(blob, fileName, fileType) {
     try {
         const file = new File([blob], fileName, { type: fileType });
 
+        // Tenta 1: Web Share Files
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
             try {
                 await navigator.share({ files: [file], title: fileName.includes('video') ? 'Vídeo Capturado' : 'Foto Capturada' });
@@ -294,6 +296,7 @@ async function handleSave(blob, fileName, fileType) {
             }
         }
 
+        // Tenta 2: Download Direto
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -344,7 +347,7 @@ function handleRetry() {
 async function startCamera(){
   try {
     if (!ffmpegLoaded && ffmpegLoading) {
-        loadingOverlay.textContent = 'Carregando recursos de câmera e conversão...';
+        loadingOverlay.textContent = 'Recursos de conversão carregando em segundo plano...';
     } else {
         loadingOverlay.style.display = 'flex';
         loadingOverlay.textContent = 'Solicitando acesso à câmera...';
@@ -356,11 +359,10 @@ async function startCamera(){
       stream = null;
     }
 
-    // Tenta uma configuração mais agressiva, priorizando a câmera.
     const constraints = {
       video: { 
           facingMode: usingFront ? 'user' : 'environment', 
-          width: { ideal: 1920 }, 
+          width: { ideal: 1920 }, // Tenta resoluções mais altas para melhor qualidade
           height: { ideal: 1080 } 
       },
       audio: true
@@ -447,8 +449,8 @@ function drawToCanvas() {
     // 2. Desenho com Espelhamento para Câmera Frontal (CORREÇÃO)
     if (usingFront) {
         ctx.save();
-        ctx.translate(cW, 0); 
-        ctx.scale(-1, 1); 
+        ctx.translate(cW, 0); // Move o ponto de origem para a direita
+        ctx.scale(-1, 1);     // Espelha horizontalmente
         ctx.drawImage(video, x, y, drawW, drawH);
         ctx.restore();
     } else {
@@ -536,7 +538,7 @@ photoBtn.addEventListener('click', async () => {
 
 
 /* -------------------------------------------------------------------------- */
-/* VÍDEO (Gravação e Conversão MP4/WEBM)                                    */
+/* VÍDEO (Gravação e Conversão MP4)                                         */
 /* -------------------------------------------------------------------------- */
 
 async function startRecording(){
@@ -545,7 +547,7 @@ async function startRecording(){
     return;
   }
   
-  if (drawLoopId) cancelAnimationFrame(drawLoopId); 
+  if (drawLoopId) cancelAnimationFrame(drawLoopId); // CORREÇÃO
   drawInterval = setInterval(() => {
     drawToCanvas();
   }, 33); 
@@ -567,7 +569,7 @@ async function startRecording(){
     alert("Erro crítico: O navegador não suporta a gravação de vídeo.");
     if (drawInterval) clearInterval(drawInterval);
     drawInterval = null;
-    drawLoop(); 
+    drawLoop(); // Reinicia o loop de desenho principal
     return;
   }
 
@@ -594,20 +596,22 @@ async function startRecording(){
     let fileType = 'video/webm';
     
     
-    if (ffmpegLoaded && ffmpeg) { 
+    // Tenta a conversão para MP4
+    if (ffmpegLoaded && ffmpeg) {
       try {
         
         const data = await FFmpeg.fetchFile(webmBlob);
         ffmpeg.FS('writeFile', 'input.webm', data);
 
+        // Parâmetros otimizados para MP4 (incluído -pix_fmt yuv420p)
         await ffmpeg.run(
           '-i','input.webm',
           '-c:v','libx264',
-          '-preset','veryfast', 
+          '-preset','veryfast',
           '-crf','23', 
           '-c:a','aac',
           '-b:a','128k',
-          '-pix_fmt','yuv420p', 
+          '-pix_fmt','yuv420p', // CHAVE para compatibilidade
           '-movflags','faststart', 
           'output.mp4'
         );
@@ -621,6 +625,7 @@ async function startRecording(){
         
       } catch (e) {
         console.error('Falha na conversão para MP4. Usando WEBM.', e);
+        // Não exibe alerta. Silenciosamente volta para WEBM.
       }
     }
     
@@ -636,8 +641,10 @@ async function startRecording(){
     previewVideo.load();
     previewVideo.play();
     
+    // Apenas muda o texto do botão de salvar se a conversão falhou (WEBM)
+    // Não usamos mais um alerta.
     if (fileType === 'video/webm') {
-        alert('AVISO: Falha na conversão para MP4. O vídeo será salvo como WEBM. Use um conversor de terceiros se precisar de MP4.');
+        console.warn('Conversão para MP4 falhou. O vídeo será salvo como WEBM.');
     }
 
     saveBtn.textContent = `Salvar Vídeo (${fileType.split('/')[1].toUpperCase()})`;
@@ -672,7 +679,6 @@ switchBtn.addEventListener('click', async () => {
 });
 
 document.addEventListener('DOMContentLoaded', ensureFFmpegLoaded);
-
 
 (function bindPressHold(){
   recordBtn.addEventListener('contextmenu', e => e.preventDefault());
